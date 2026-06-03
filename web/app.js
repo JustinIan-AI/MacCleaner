@@ -2064,12 +2064,172 @@
     }
   }
 
+
+  // ===================== Version Check (CDN-first) =====================
+  // Uses frontend fetch which respects macOS system proxy settings.
+  // jsDelivr CDN supports CORS and is accessible in China.
+
+  async function fetchVersionFromCDN() {
+    var CDN_URLS = [
+      'https://cdn.jsdelivr.net/gh/JustinIan-AI/MacCleaner@main/VERSION',
+      'https://cdn.jsdelivr.net/gh/JustinIan-AI/MacCleaner@release-v0.1.2/VERSION',
+      'https://raw.githubusercontent.com/JustinIan-AI/MacCleaner/main/VERSION',
+      'https://raw.githubusercontent.com/JustinIan-AI/MacCleaner/release-v0.1.2/VERSION'
+    ];
+    for (var cdnUrl of CDN_URLS) {
+      try {
+        var cdnRes = await fetch(cdnUrl, { signal: AbortSignal.timeout(5000) });
+        if (cdnRes.ok) {
+          var ver = (await cdnRes.text()).trim();
+          if (ver && ver.startsWith('v')) return ver;
+        }
+      } catch(e) { /* network error, try next */ }
+    }
+    return null;
+  }
+
+  async function checkUpdateViaCDN(currentVersion) {
+    var latest = await fetchVersionFromCDN();
+    if (!latest) return null;
+    return {
+      current: currentVersion,
+      latest: latest,
+      has_update: compareVersions(latest, currentVersion),
+      download_url: 'https://github.com/JustinIan-AI/MacCleaner/releases/tag/' + latest,
+      source: 'cdn'
+    };
+  }
+
+  function compareVersions(a, b) {
+    var aParts = a.replace('v','').split('.').map(Number);
+    var bParts = b.replace('v','').split('.').map(Number);
+    for (var i = 0; i < Math.max(aParts.length, bParts.length); i++) {
+      var va = aParts[i] || 0, vb = bParts[i] || 0;
+      if (va > vb) return true;
+      if (va < vb) return false;
+    }
+    return false;
+  }
+
+  async function checkForUpdate(currentVersion, repoUrl) {
+    var cdnData = await checkUpdateViaCDN(currentVersion);
+    var data = cdnData;
+    if (!data || data.error) {
+      try {
+        var res = await fetch('/api/version/check');
+        if (res.ok) data = await res.json();
+      } catch(e) { /* silent */ }
+    }
+    if (!data || data.error || !data.has_update) return;
+    var banner = document.getElementById('update-banner');
+    var text = document.getElementById('update-banner-text');
+    var link = document.getElementById('update-banner-link');
+    if (banner && text && link) {
+      text.textContent = '✨ 新版本 ' + data.latest + ' 可用';
+      link.href = data.download_url || (repoUrl + '/releases/tag/' + data.latest);
+      banner.classList.remove('hidden');
+    }
+  }
+
+  window.dismissUpdate = function() {
+    var banner = document.getElementById('update-banner');
+    if (banner) banner.classList.add('hidden');
+  };
+
+  window.showUpdateDialog = async function() {
+    var dialog = document.getElementById('update-dialog');
+    var loading = document.getElementById('update-dialog-loading');
+    var result = document.getElementById('update-dialog-result');
+    var iconEl = document.getElementById('update-dialog-icon');
+    var currentEl = document.getElementById('update-dialog-current');
+    var latestEl = document.getElementById('update-dialog-latest');
+    var descEl = document.getElementById('update-dialog-desc');
+    var downloadLink = document.getElementById('update-dialog-download');
+    if (!dialog) return;
+    dialog.style.display = 'flex';
+    loading.style.display = 'block';
+    result.style.display = 'none';
+
+    function renderResult(checkData) {
+      loading.style.display = 'none';
+      result.style.display = 'block';
+      currentEl.textContent = '当前版本: ' + (checkData.current || 'v0.1.2');
+      if (checkData.error) {
+        iconEl.textContent = '⚠️';
+        latestEl.textContent = '检查更新失败';
+        descEl.textContent = checkData.error === '更新服务暂不可达' ? '无法连接更新服务，请检查网络后重试' : checkData.error;
+        downloadLink.href = 'https://github.com/JustinIan-AI/MacCleaner/releases';
+        downloadLink.style.display = 'inline-block';
+        downloadLink.textContent = '🌐 前往 GitHub';
+        var actions = document.getElementById('update-dialog-actions');
+        var retryBtn = document.getElementById('update-retry-btn');
+        if (!retryBtn) {
+          retryBtn = document.createElement('button');
+          retryBtn.id = 'update-retry-btn';
+          retryBtn.className = 'uwin-btn uwin-btn-secondary';
+          retryBtn.textContent = '🔄 重试';
+          retryBtn.onclick = function() { closeUpdateDialog(); setTimeout(showUpdateDialog, 300); };
+          actions.insertBefore(retryBtn, actions.firstChild);
+        }
+      } else if (checkData.has_update) {
+        iconEl.textContent = '🆕';
+        latestEl.textContent = '最新版本: ' + (checkData.latest || '');
+        descEl.textContent = '有新版本可用，建议更新以获得最新功能';
+        downloadLink.href = checkData.download_url || 'https://github.com/JustinIan-AI/MacCleaner/releases';
+        downloadLink.style.display = 'inline-block';
+        downloadLink.textContent = '⬇ 下载更新';
+      } else {
+        iconEl.textContent = '✅';
+        latestEl.textContent = '最新版本: ' + (checkData.latest || checkData.current);
+        descEl.textContent = '当前已是最新版本';
+        downloadLink.style.display = 'none';
+      }
+    }
+
+    // Step 1: Try CDN first (browser respects proxy)
+    var cdnVersion = await fetchVersionFromCDN();
+    if (cdnVersion) {
+      var hasUpdate = compareVersions(cdnVersion, 'v0.1.2');
+      renderResult({
+        current: 'v0.1.2',
+        latest: cdnVersion,
+        has_update: hasUpdate,
+        download_url: 'https://github.com/JustinIan-AI/MacCleaner/releases/tag/' + cdnVersion
+      });
+      return;
+    }
+
+    // Step 2: Fallback to backend API
+    try {
+      var checkRes = await fetch('/api/version/check?refresh=1');
+      var checkData = await checkRes.json();
+      renderResult(checkData);
+    } catch(e) {
+      loading.style.display = 'none';
+      result.style.display = 'block';
+      iconEl.textContent = '⚠️';
+      currentEl.textContent = '当前版本: v0.1.2';
+      latestEl.textContent = '检查更新失败';
+      descEl.textContent = '网络异常，无法连接到更新服务';
+      downloadLink.href = 'https://github.com/JustinIan-AI/MacCleaner/releases';
+      downloadLink.style.display = 'inline-block';
+      downloadLink.textContent = '🌐 前往 GitHub';
+    }
+  };
+
+  window.closeUpdateDialog = function() {
+    var dialog = document.getElementById('update-dialog');
+    if (dialog) dialog.style.display = 'none';
+  };
+
   async function init() {
     // Check mole installation status
     await checkMoleStatus();
 
     var verEl = $('statusbar-version');
-    if (verEl) verEl.textContent = 'v0.1.1';
+    if (verEl) verEl.textContent = 'v0.1.2';
+    // Check for updates from CDN (browser respects proxy)
+    checkForUpdate('v0.1.2', 'https://github.com/JustinIan-AI/MacCleaner');
     initCleanEventHandlers();
     await loadRiskMap();
     // Show welcome page by default, navigate to specific module if hash is set

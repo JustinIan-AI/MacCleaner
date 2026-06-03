@@ -33,6 +33,9 @@
       <li><a href="#analyze" class="nav-item" data-module="analyze"><span class="nav-icon">📊</span><span class="nav-label">磁盘分析</span><span class="risk-badge risk-none">只读</span></a></li>
       <li><a href="#history" class="nav-item" data-module="history"><span class="nav-icon">📋</span><span class="nav-label">操作历史</span><span class="risk-badge risk-none">只读</span></a></li>
     </ul>
+    <ul class="nav-list nav-bottom">
+      <li><a href="#" class="nav-item" id="check-update-btn" onclick="showUpdateDialog();return false"><span class="nav-icon">🔄</span><span class="nav-label">检查更新</span></a></li>
+    </ul>
   </nav>
 
   <!-- Main Content Area -->
@@ -234,7 +237,43 @@
   </aside>
 </div>
 
+<!-- Update Dialog Modal -->
+<div id="update-dialog" class="overlay" style="display:none">
+  <div id="update-window" class="update-window">
+    <div class="update-window-titlebar">
+      <span class="update-window-dots">
+        <span class="udot udot-close"></span>
+        <span class="udot udot-min"></span>
+        <span class="udot udot-max"></span>
+      </span>
+      <span class="update-window-title">检查更新</span>
+    </div>
+    <div class="update-window-body">
+      <div id="update-dialog-loading" style="padding:30px 0;text-align:center">
+        <div class="spinner" style="width:30px;height:30px;border:3px solid var(--border-subtle);border-top-color:var(--accent);border-radius:50%;animation:spin 0.8s linear infinite;margin:0 auto 14px"></div>
+        <span style="color:var(--text-tertiary);font-size:13px">正在检查更新...</span>
+      </div>
+      <div id="update-dialog-result" style="display:none;text-align:center">
+        <div id="update-dialog-icon" style="font-size:48px;margin-bottom:12px;line-height:1">🔄</div>
+        <div id="update-dialog-current" style="font-size:12px;color:var(--text-tertiary);margin-bottom:4px"></div>
+        <div id="update-dialog-latest" style="font-size:16px;font-weight:600;margin-bottom:6px"></div>
+        <div id="update-dialog-desc" style="font-size:13px;color:var(--text-secondary);margin-bottom:20px"></div>
+        <div id="update-dialog-actions" style="display:flex;gap:10px;justify-content:center;align-items:center">
+          <button class="uwin-btn uwin-btn-secondary" onclick="closeUpdateDialog()">关闭</button>
+          <a id="update-dialog-download" href="#" target="_blank" class="uwin-btn uwin-btn-primary" style="display:none">⬇ 下载更新</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Status Bar -->
+  <!-- Update notification banner -->
+  <div id="update-banner" class="update-banner hidden">
+    <span id="update-banner-text"></span>
+    <a id="update-banner-link" href="#" target="_blank" class="update-banner-btn">下载更新</a>
+    <button id="update-banner-close" class="update-banner-close" onclick="dismissUpdate()">✕</button>
+  </div>
 <footer id="statusbar">
   <span id="statusbar-status">就绪</span>
   <span id="statusbar-version"></span>

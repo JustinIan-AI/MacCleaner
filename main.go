@@ -7,6 +7,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -35,6 +36,8 @@ type RiskInfo struct {
 	Affects   []string `json:"affects"`
 	SafeZones []string `json:"safe_zones"`
 }
+
+const AppVersion = "v0.1.2"
 
 var riskMap = map[string]RiskInfo{
 	"clean": {
@@ -231,6 +234,245 @@ func getCancel(module string) context.CancelFunc {
 	runningCancelMu.Lock()
 	defer runningCancelMu.Unlock()
 	return runningCancel[module]
+}
+
+func handleVersion(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"current":     AppVersion,
+		"repository":  "https://github.com/JustinIan-AI/MacCleaner",
+	})
+}
+
+// Version check state (cached)
+var (
+	vcCache     *versionCheckData
+	vcCacheMu  sync.Mutex
+	vcCacheAt  time.Time
+)
+
+type versionCheckData struct {
+	Current     string `json:"current"`
+	Latest      string `json:"latest,omitempty"`
+	HasUpdate   bool   `json:"has_update"`
+	DownloadURL string `json:"download_url,omitempty"`
+	Error       string `json:"error,omitempty"`
+}
+
+func handleVersionCheck(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	// Force refresh if ?refresh=1
+	forceRefresh := r.URL.Query().Get("refresh") == "1"
+
+	// Serve from cache (10 min TTL) unless force refresh
+	if !forceRefresh {
+		vcCacheMu.Lock()
+		if vcCache != nil && time.Since(vcCacheAt) < 10*time.Minute {
+			res := *vcCache
+			vcCacheMu.Unlock()
+			json.NewEncoder(w).Encode(res)
+			return
+		}
+		vcCacheMu.Unlock()
+	}
+
+	data := fetchLatestRelease()
+	// Always update cache with result (even errors cached briefly)
+	vcCacheMu.Lock()
+	vcCache = data
+	vcCacheAt = time.Now()
+	vcCacheMu.Unlock()
+
+	json.NewEncoder(w).Encode(data)
+}
+
+const (
+	repoOwner = "JustinIan-AI"
+	repoName  = "MacCleaner"
+)
+
+// Three sources for version check: raw.githubusercontent.com → GitHub API → curl (respects macOS proxy)
+func fetchLatestRelease() *versionCheckData {
+	client := &http.Client{Timeout: 6 * time.Second}
+
+	// Source 1: raw.githubusercontent.com — no rate limit, globally fast CDN
+	rawURLs := []string{
+		"https://raw.githubusercontent.com/" + repoOwner + "/" + repoName + "/main/VERSION",
+		"https://raw.githubusercontent.com/" + repoOwner + "/" + repoName + "/release-v0.1.2/VERSION",
+	}
+	for _, url := range rawURLs {
+		if data := tryRawVersion(client, url); data != nil {
+			return data
+		}
+	}
+
+	// Source 2: GitHub API — fallback with retry
+	if data := tryGitHubAPI(client); data != nil && data.Error == "" {
+		return data
+	}
+
+	// Source 3: curl command — respects macOS system proxy settings
+	return tryCurlVersion()
+}
+
+// tryRawVersion fetches VERSION file from raw.githubusercontent.com
+func tryRawVersion(client *http.Client, url string) *versionCheckData {
+	// Short timeout — raw CDN should be fast; don't block API fallback
+	shortClient := &http.Client{Timeout: 3 * time.Second}
+	resp, err := shortClient.Get(url)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return nil
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil
+	}
+
+	latestTag := strings.TrimSpace(string(body))
+	if latestTag == "" {
+		return nil
+	}
+
+	// Construct download URL from version tag
+	downloadURL := "https://github.com/" + repoOwner + "/" + repoName + "/releases/tag/" + latestTag
+
+	hasUpdate := compareVersions(AppVersion, latestTag)
+
+	return &versionCheckData{
+		Current:     AppVersion,
+		Latest:      latestTag,
+		HasUpdate:   hasUpdate,
+		DownloadURL: downloadURL,
+	}
+}
+
+// tryGitHubAPI fetches latest release from GitHub API with retry
+func tryGitHubAPI(client *http.Client) *versionCheckData {
+	url := "https://api.github.com/repos/" + repoOwner + "/" + repoName + "/releases/latest"
+
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Duration(attempt*2) * time.Second) // 2s, 4s
+		}
+
+		resp, err := client.Get(url)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		if resp.StatusCode == 403 || resp.StatusCode == 429 {
+			io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+			lastErr = fmt.Errorf("rate limited")
+			time.Sleep(3 * time.Second)
+			continue
+		}
+
+		if resp.StatusCode != 200 {
+			io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+			lastErr = fmt.Errorf("HTTP %d", resp.StatusCode)
+			continue
+		}
+
+		var gh struct {
+			TagName string `json:"tag_name"`
+			HTMLURL string `json:"html_url"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&gh); err != nil {
+			resp.Body.Close()
+			lastErr = fmt.Errorf("parse error: %v", err)
+			continue
+		}
+		resp.Body.Close()
+
+		if gh.TagName == "" {
+			lastErr = fmt.Errorf("empty tag_name")
+			continue
+		}
+
+		hasUpdate := compareVersions(AppVersion, gh.TagName)
+
+		return &versionCheckData{
+			Current:     AppVersion,
+			Latest:      gh.TagName,
+			HasUpdate:   hasUpdate,
+			DownloadURL: gh.HTMLURL,
+		}
+	}
+
+	errMsg := "更新服务暂不可达"
+	if lastErr != nil {
+		errMsg = "更新服务暂不可达 (" + lastErr.Error() + ")"
+	}
+	return &versionCheckData{Current: AppVersion, Error: errMsg}
+}
+
+// tryCurlVersion uses the curl command which respects macOS system proxy settings.
+// This is useful when Go's HTTP client cannot reach GitHub due to proxy/firewall.
+func tryCurlVersion() *versionCheckData {
+	urls := []string{
+		"https://raw.githubusercontent.com/" + repoOwner + "/" + repoName + "/main/VERSION",
+		"https://raw.githubusercontent.com/" + repoOwner + "/" + repoName + "/release-v0.1.2/VERSION",
+		"https://cdn.jsdelivr.net/gh/" + repoOwner + "/" + repoName + "@main/VERSION",
+		"https://cdn.jsdelivr.net/gh/" + repoOwner + "/" + repoName + "@release-v0.1.2/VERSION",
+	}
+	for _, url := range urls {
+		cmd := exec.Command("curl", "-s", "--connect-timeout", "5", "--max-time", "8", url)
+		output, err := cmd.Output()
+		if err != nil {
+			continue
+		}
+		latestTag := strings.TrimSpace(string(output))
+		if latestTag == "" || !strings.HasPrefix(latestTag, "v") {
+			continue
+		}
+		hasUpdate := compareVersions(AppVersion, latestTag)
+		return &versionCheckData{
+			Current:     AppVersion,
+			Latest:      latestTag,
+			HasUpdate:   hasUpdate,
+			DownloadURL: "https://github.com/" + repoOwner + "/" + repoName + "/releases/tag/" + latestTag,
+		}
+	}
+	return &versionCheckData{Current: AppVersion, Error: "更新服务暂不可达"}
+}
+
+// compareVersions compares two semver strings. Returns true if latest > current.
+func compareVersions(current, latest string) bool {
+	curVer := strings.TrimPrefix(current, "v")
+	latVer := strings.TrimPrefix(latest, "v")
+	curParts := strings.Split(curVer, ".")
+	latParts := strings.Split(latVer, ".")
+	maxLen := len(curParts)
+	if len(latParts) > maxLen {
+		maxLen = len(latParts)
+	}
+	for i := 0; i < maxLen; i++ {
+		var c, l int
+		if i < len(curParts) {
+			c, _ = strconv.Atoi(curParts[i])
+		}
+		if i < len(latParts) {
+			l, _ = strconv.Atoi(latParts[i])
+		}
+		if l > c {
+			return true
+		}
+		if l < c {
+			break
+		}
+	}
+	return false
 }
 
 func handleRiskMap(w http.ResponseWriter, r *http.Request) {
@@ -1203,6 +1445,8 @@ func main() {
 	mux.HandleFunc("/api/status", handleStatus)
 	mux.HandleFunc("/api/analyze", handleAnalyze)
 	mux.HandleFunc("/api/history", handleHistory)
+	mux.HandleFunc("/api/version", handleVersion)
+	mux.HandleFunc("/api/version/check", handleVersionCheck)
 	mux.HandleFunc("/api/risk-map", handleRiskMap)
 	mux.HandleFunc("/api/disk/scan", handleDiskScan)
 	mux.HandleFunc("/api/disk/delete", handleDiskDelete)

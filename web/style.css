@@ -375,9 +375,193 @@ ul { list-style: none; }
   color: var(--text-secondary);
   flex-shrink: 0;
 }
+
+/* Sidebar bottom (check update) */
+.nav-bottom {
+  margin-top: auto;
+  border-top: 1px solid var(--border-subtle, rgba(255,255,255,0.08));
+  padding-top: 4px;
+}
+#check-update-btn .nav-icon {
+  font-size: 15px;
+}
+
+/* Update dialog — macOS window style */
+#update-dialog .overlay {
+  background: rgba(0,0,0,0.4);
+  backdrop-filter: blur(4px);
+}
+
+.update-window {
+  width: 380px;
+  background: var(--bg-card, #fff);
+  border-radius: 10px;
+  border: 1px solid var(--border, rgba(0,0,0,0.15));
+  box-shadow: 0 12px 48px rgba(0,0,0,0.25), 0 2px 8px rgba(0,0,0,0.1);
+  animation: slideUp 0.2s ease;
+  overflow: hidden;
+}
+
+.update-window-titlebar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px 8px;
+  background: var(--bg-sidebar, #f5f5f5);
+  border-bottom: 1px solid var(--border-subtle, rgba(0,0,0,0.08));
+  user-select: none;
+}
+
+.update-window-dots {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.udot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.udot-close { background: #FF5F57; }
+.udot-min { background: #FEBC2E; }
+.udot-max { background: #28C840; }
+
+.update-window-title {
+  flex: 1;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary, #666);
+  letter-spacing: 0.3px;
+  margin-right: 42px; /* center under dots offset */
+}
+
+.update-window-body {
+  padding: 24px 28px 20px;
+  background: var(--bg-card, #fff);
+}
+
+/* Update dialog result */
+#update-dialog-result {
+  display: none;
+}
+
+/* macOS-style buttons */
+.uwin-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 18px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  text-decoration: none;
+  border: none;
+  transition: all 0.15s ease;
+  line-height: 1.4;
+}
+
+.uwin-btn-primary {
+  background: var(--accent, #007AFF);
+  color: #fff;
+  border: none;
+}
+
+.uwin-btn-primary:hover {
+  opacity: 0.85;
+}
+
+.uwin-btn-secondary {
+  background: transparent;
+  color: var(--text-primary, #333);
+  border: 1px solid var(--border, #ccc);
+}
+
+.uwin-btn-secondary:hover {
+  background: var(--bg-sidebar, #f0f0f0);
+}
+
+#update-dialog .overlay-content {
+  border-radius: 12px;
+  overflow: hidden;
+}
+#update-dialog .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  text-decoration: none;
+  border: none;
+  transition: opacity 0.2s;
+}
+#update-dialog .btn-primary {
+  background: var(--accent, #007AFF);
+  color: #fff;
+}
+#update-dialog .btn-primary:hover {
+  opacity: 0.9;
+}
+#update-dialog .btn-secondary {
+  background: var(--bg-card, #f0f0f0);
+  color: var(--text-primary, #333);
+  border: 1px solid var(--border, #ddd);
+}
+#update-dialog .btn-secondary:hover {
+  background: var(--border-subtle, #e0e0e0);
+}
+
 #statusbar-status { flex: 1; }
 .statusbar-right { color: var(--text-tertiary); }
 #statusbar-version { margin-left: 12px; color: var(--text-tertiary); font-size: 11px; }
+
+/* Update notification banner */
+.update-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 9999;
+  background: linear-gradient(135deg, var(--accent), #5E5CE6);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 16px;
+  font-size: 13px;
+  gap: 12px;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 2px 12px rgba(0,0,0,0.15);
+}
+.update-banner.hidden { display: none; }
+.update-banner-btn {
+  background: #fff;
+  color: var(--accent);
+  padding: 4px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: opacity 0.2s;
+}
+.update-banner-btn:hover { opacity: 0.9; }
+.update-banner-close {
+  background: none;
+  border: none;
+  color: rgba(255,255,255,0.7);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 2px 6px;
+  line-height: 1;
+}
+.update-banner-close:hover { color: #fff; }
+
 /* === Risk Confirmation Sheet === */
 .overlay {
   position: fixed;
