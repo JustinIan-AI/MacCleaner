@@ -1,0 +1,30 @@
+{
+  "name": "mole-tool",
+  "version": "1.0.0",
+  "description": "macOS 系统清理工具，基于 [mole](https://github.com/tw93/Mole) 构建的 Web 界面,降低使用门槛，边界清理你的Mac笔记本。",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JustinIan-AI/MacCleaner.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/JustinIan-AI/MacCleaner/issues"
+  },
+  "homepage": "https://github.com/JustinIan-AI/MacCleaner#readme",
+  "dependencies": {
+    "playwright": "^1.60.0"
+  },
+  "devDependencies": {
+    "acorn": "^8.16.0"
+  }
+}

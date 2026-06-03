@@ -1,0 +1,18 @@
+{
+  "identifier": "default",
+  "description": "Default capability for MacCleaner",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "shell:allow-spawn",
+    {
+      "identifier": "shell:allow-spawn",
+      "allow": [
+        {
+          "name": "mole-tool",
+          "sidecar": true
+        }
+      ]
+    }
+  ]
+}

@@ -80,6 +80,20 @@
   themeToggle.addEventListener('click', toggleTheme);
   loadTheme();
 
+  // === Nav Item Click Handler ===
+  navItems.forEach(function(item) {
+    item.addEventListener('click', function(e) {
+      e.preventDefault();
+      var mod = this.dataset.module;
+      if (mod) {
+        navigate('#' + mod);
+        if (location.hash !== '#' + mod) {
+          location.hash = '#' + mod;
+        }
+      }
+    });
+  });
+
   // === Risk Map Load ===
   async function loadRiskMap() {
     try {
@@ -297,7 +311,128 @@
   }
 
   function executeModuleAction(module) {
-    showRiskSheet(module);
+    // For installer/purge: bypass mo CLI TUI entirely, use direct file deletion
+    if (module === 'installer' || module === 'purge') {
+      var items = _moduleItems[module] || [];
+      var selectedItems = items.filter(function(i) { return i.selected !== false; });
+      // Filter out items with empty or invalid paths
+      selectedItems = selectedItems.filter(function(i) { return i.path && i.path.trim() !== ''; });
+      if (selectedItems.length === 0) {
+        setStatusbar('没有选中要清理的项目', 'error');
+        return;
+      }
+      // Always use direct deletion - backend will resolve paths
+      executeModuleDeleteStream(module, selectedItems);
+      return;
+    }
+    // Default: execute via mo CLI
+    executeAction(module, 'run');
+  }
+
+  async function executeModuleDeleteStream(module, items) {
+    var outputEl = document.getElementById('output-' + module);
+    if (!outputEl) return;
+    outputEl.innerHTML = '';
+
+    var controller = new AbortController();
+    runningControllers[module] = controller;
+    showProgressIndicator(module);
+    addStopButton(module);
+
+    // Disable buttons
+    var btnDry = document.querySelector('.btn[data-module="' + module + '"][data-action="dry-run"]');
+    var btnRun = document.querySelector('.btn[data-module="' + module + '"][data-action="run"]');
+    if (btnDry) btnDry.disabled = true;
+    if (btnRun) btnRun.disabled = true;
+
+    try {
+      var res = await fetch('/api/module/delete-stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ module: module, items: items }),
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        outputEl.innerHTML += '<div class="line-stderr">❌ HTTP ' + res.status + '</div>';
+        cleanup(module);
+        setStatusbar('删除失败', 'error');
+        return;
+      }
+
+      var decoder = new TextDecoder();
+      var reader = res.body.getReader();
+      var buffer = '';
+
+      function readStream() {
+        reader.read().then(function(result) {
+          if (result.done) {
+            // Process remaining buffer
+            if (buffer.trim()) {
+              var parts = buffer.split('\n\n');
+              for (var pi = 0; pi < parts.length; pi++) {
+                if (parts[pi].trim()) processSSEEvent(outputEl, parts[pi]);
+              }
+            }
+            // Parse exit code from done event
+            var exitCode = 0;
+            var summaryText = '';
+            if (buffer.trim()) {
+              var lines = buffer.split('\n\n');
+              for (var li = 0; li < lines.length; li++) {
+                if (lines[li].startsWith('data: ')) {
+                  try {
+                    var doneData = JSON.parse(lines[li].slice(6));
+                    if (doneData.exit_code !== undefined) exitCode = doneData.exit_code;
+                    if (doneData.summary) summaryText = doneData.summary;
+                  } catch(e) {}
+                }
+              }
+            }
+            // Clear module items after successful deletion
+            _moduleItems[module] = null;
+            if (exitCode === 0) {
+              setStatusbar(summaryText || (module === 'installer' ? '安装包清理完成' : '构建产物清理完成'), 'success');
+            } else if (exitCode === -1) {
+              setStatusbar('已取消', '');
+            } else {
+              setStatusbar(summaryText || '执行失败', 'error');
+            }
+            cleanup(module);
+            return;
+          }
+
+          buffer += decoder.decode(result.value, { stream: true });
+          var parts = buffer.split('\n\n');
+          buffer = parts.pop() || '';
+
+          for (var pi = 0; pi < parts.length; pi++) {
+            processSSEEvent(outputEl, parts[pi]);
+          }
+
+          readStream();
+        }).catch(function(err) {
+          if (err.name === 'AbortError') {
+            outputEl.innerHTML += '<div class="line-stderr">⏹️ 已手动停止</div>';
+            setStatusbar('已停止', '');
+          } else {
+            outputEl.innerHTML += '<div class="line-stderr">❌ 读取错误: ' + err.message + '</div>';
+            setStatusbar('读取错误', 'error');
+          }
+          cleanup(module);
+        });
+      }
+
+      readStream();
+    } catch (err) {
+      if (err.name === 'AbortError') {
+        outputEl.innerHTML += '<div class="line-stderr">⏹️ 已手动停止</div>';
+        setStatusbar('已停止', '');
+      } else {
+        outputEl.innerHTML += '<div class="line-stderr">❌ 连接失败: ' + err.message + '</div>';
+        setStatusbar('连接失败', 'error');
+      }
+      cleanup(module);
+    }
   }
 
   // === ANSI stripping and output parsing ===
@@ -597,8 +732,48 @@
       el.innerHTML = `<div class="loading" style="color:var(--orange)">${escapeHtml(data.error)}</div>`;
       return;
     }
-    const formatted = JSON.stringify(data, null, 2);
-    el.innerHTML = `<pre style="font-family:SF Mono,Menlo,monospace;font-size:12px;line-height:1.6;white-space:pre-wrap;color:var(--text-primary);background:var(--output-bg);padding:16px;border-radius:8px;border:1px solid var(--border)">${escapeHtml(formatted)}</pre>`;
+    const sessions = data.sessions || [];
+    if (sessions.length === 0) {
+      el.innerHTML = '<div class="uninstall-empty">✨ 暂无操作记录</div>';
+      return;
+    }
+
+    // Action descriptions for each command type
+    const actionLabels = {
+      'clean': '🧹 深度清理',
+      'uninstall': '🗑️ 卸载应用',
+      'purge': '🏗️ 构建产物清理',
+      'optimize': '⚙️ 系统优化',
+      'installer': '🗂️ 安装包清理',
+    };
+
+    let html = '<table class="uninstall-table"><thead><tr>' +
+      '<th style="width:150px">操作时间</th>' +
+      '<th style="width:120px">操作动作</th>' +
+      '<th>执行动作简介</th>' +
+      '</tr></thead><tbody>';
+    for (const s of sessions) {
+      const time = s.started_at || '-';
+      const cmd = s.command || '-';
+      const label = actionLabels[cmd] || cmd;
+      const actions = s.actions || {};
+
+      // Build a concise description
+      const descParts = [];
+      if (s.items > 0) descParts.push('处理 ' + s.items + ' 项');
+      if (s.size && s.size !== '0B') descParts.push('释放 ' + s.size);
+      if (actions.removed > 0) descParts.push('删除 ' + actions.removed + ' 项');
+      if (actions.trashed > 0) descParts.push('移入废纸篓 ' + actions.trashed + ' 项');
+      if (actions.failed > 0) descParts.push('失败 ' + actions.failed + ' 项');
+      if (actions.skipped > 0) descParts.push('跳过 ' + actions.skipped + ' 项');
+      const description = descParts.length > 0 ? descParts.join('，') : (s.operation_count > 0 ? '操作完成' : '无变更');
+
+      html += '<tr><td>' + escapeHtml(time) + '</td>' +
+        '<td><strong>' + escapeHtml(label) + '</strong></td>' +
+        '<td>' + escapeHtml(description) + '</td></tr>';
+    }
+    html += '</tbody></table>';
+    el.innerHTML = html;
   }
 
   // === Uninstall Module ===
@@ -703,40 +878,21 @@
   function confirmSingleUninstall(btn) {
     const appName = btn.dataset.app;
     if (!appName) return;
-    const module = 'uninstall';
-    const risk = riskMap[module];
-    currentModule = module;
+    // Find the full app data in uninstallApps
+    var appData = null;
+    for (var i = 0; i < uninstallApps.length; i++) {
+      var a = uninstallApps[i];
+      if ((a.uninstall_name || a.name || '') === appName) {
+        appData = { name: appName, path: a.path || '', bundle_id: a.bundle_id || '' };
+        break;
+      }
+    }
+    if (!appData) {
+      appData = { name: appName, path: '', bundle_id: '' };
+    }
+    currentModule = 'uninstall';
     currentAction = 'run-selected';
-
-    sheetTitle.textContent = '确认卸载: ' + appName;
-    sheetRiskLabel.textContent = risk ? risk.risk_label : '高风险';
-    sheetRiskLabel.style.background = '#FF453A22';
-    sheetRiskLabel.style.color = '#FF453A';
-
-    sheetAffects.innerHTML = '';
-    if (risk) {
-      risk.affects.forEach(function(a) {
-        var li = document.createElement('li');
-        li.textContent = a;
-        sheetAffects.appendChild(li);
-      });
-    }
-    var li2 = document.createElement('li');
-    li2.textContent = '应用: ' + appName;
-    sheetAffects.appendChild(li2);
-
-    sheetSafezones.innerHTML = '';
-    if (risk) {
-      risk.safe_zones.forEach(function(z) {
-        var li = document.createElement('li');
-        li.textContent = z;
-        sheetSafezones.appendChild(li);
-      });
-    }
-
-    sheetConsent.checked = false;
-    sheetConfirm.disabled = true;
-    overlay.classList.remove('hidden');
+    executeUninstall([appData]);
   }
 
   function cleanupUninstall() {
@@ -755,10 +911,64 @@
   window.toggleModuleItem = toggleModuleItem;
   window.executeModuleAction = executeModuleAction;
 
+  async function scanModuleForCleanup(module) {
+    const outputEl = document.getElementById('output-' + module);
+    if (!outputEl) return;
+    outputEl.innerHTML = '<div class="loading">🔍 正在扫描...</div>';
+
+    const btnDry = document.querySelector('.btn[data-module="' + module + '"][data-action="dry-run"]');
+    const btnRun = document.querySelector('.btn[data-module="' + module + '"][data-action="run"]');
+    if (btnDry) btnDry.disabled = true;
+    if (btnRun) btnRun.disabled = true;
+
+    try {
+      var res = await fetch('/api/' + module + '/scan');
+      var items = await res.json();
+
+      // Check for error from backend
+      if (items && items.error) {
+        outputEl.innerHTML = '<div class="line-stderr">❌ 扫描失败: ' + escapeHtml(items.error) + '</div>';
+        setStatusbar('扫描失败', 'error');
+        cleanup(module);
+        return;
+      }
+
+      // Format items for _moduleItems
+      var formattedItems = (items || []).map(function(item) {
+        return {
+          name: item.name || item.path || '',
+          size: item.size_str || formatBytes(item.size || 0) || '--',
+          path: item.path || '',
+          selected: true,
+        };
+      });
+
+      _moduleItems[module] = formattedItems;
+
+      if (formattedItems.length > 0) {
+        outputEl.innerHTML = ''; // Clear loading message
+        renderParsedItems(module, formattedItems);
+        setStatusbar(MODULES[module] ? MODULES[module].label + ' 扫描完成' : module + ' 扫描完成', 'success');
+      } else {
+        outputEl.innerHTML = '<div class="loading">未发现可清理的项目</div>';
+        setStatusbar('未发现可清理的项目', '');
+      }
+    } catch (e) {
+      outputEl.innerHTML = '<div class="line-stderr">❌ 扫描失败: ' + escapeHtml(e.message) + '</div>';
+      setStatusbar('扫描失败', 'error');
+    }
+
+    cleanup(module);
+  }
+
   // === SSE Execution (for clean/purge/installer/optimize) ===
   async function executeAction(module, action) {
     const outputEl = document.getElementById('output-' + module);
     if (!outputEl) return;
+    // For installer/purge dry-run, use Go native scan instead of mo CLI
+    if ((module === 'installer' || module === 'purge') && action === 'dry-run') {
+      return scanModuleForCleanup(module);
+    }
     outputEl.innerHTML = '';
     const endpoint = '/api/' + module + '/' + action;
     const controller = new AbortController();
@@ -886,6 +1096,7 @@
     }
   }
 
+  // === SSE Execution (for clean/purge/installer/optimize) ===
   function cleanup(module) {
     const btnDry = document.querySelector(`.btn[data-module="${module}"][data-action="dry-run"]`);
     const btnRun = document.querySelector(`.btn[data-module="${module}"][data-action="run"]`);
@@ -959,11 +1170,21 @@
     const action = btn.dataset.action;
     if (!module || !action) return;
     if (btn.disabled) return;
-    if (action === 'run') {
-      showRiskSheet(module);
-    } else {
+    // For interactive modules (installer/purge), redirect to delete-stream
+    if (action === 'run' && (module === 'installer' || module === 'purge')) {
+      if (_moduleItems[module] && _moduleItems[module].length > 0) {
+        executeModuleAction(module);
+        return;
+      }
       executeAction(module, 'dry-run');
+      return;
     }
+    if (action === 'run' && module === 'clean') {
+      executeAction(module, 'dry-run');
+      return;
+    }
+    // Directly execute since user already chose the action
+    executeAction(module, action === 'run' ? 'run' : 'dry-run');
   });
 
   // === Uninstall button handlers ===
@@ -975,15 +1196,19 @@
     }
     var selBtn = e.target.closest('#uninstall-selected');
     if (selBtn && !selBtn.disabled) {
-      var appNames = [];
+      var appsToUninstall = [];
       uninstallSelected.forEach(function(idx) {
         var app = uninstallApps[idx];
-        if (app) appNames.push(app.uninstall_name || app.name || '');
+        if (app) {
+          appsToUninstall.push({
+            name: app.uninstall_name || app.name || '',
+            path: app.path || '',
+            bundle_id: app.bundle_id || ''
+          });
+        }
       });
-      if (appNames.length === 0) return;
-      currentModule = 'uninstall';
-      currentAction = 'run-selected';
-      showRiskSheet('uninstall');
+      if (appsToUninstall.length === 0) return;
+      executeUninstall(appsToUninstall);
       return;
     }
   });
@@ -1093,7 +1318,7 @@
   });
 
   // === Uninstall Execution ===
-  async function executeUninstall(appNames) {
+  async function executeUninstall(apps) {
     const outputEl = $('output-uninstall');
     if (!outputEl) return;
     outputEl.innerHTML = '';
@@ -1110,7 +1335,7 @@
       const res = await fetch('/api/uninstall/run-selected', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ apps: appNames }),
+        body: JSON.stringify({ apps: apps }),
       });
       if (!res.ok) {
         outputEl.innerHTML += `<div class="line-stderr">❌ HTTP ${res.status}</div>`;
@@ -1125,11 +1350,33 @@
       function readStream() {
         reader.read().then(({ done, value }) => {
           if (done) {
+            // Parse the done event for exit code
+            var exitCode = 0;
+            if (buffer.trim()) {
+              var lines = buffer.split('\n\n');
+              for (var li = 0; li < lines.length; li++) {
+                if (lines[li].startsWith('data: ')) {
+                  try {
+                    var doneData = JSON.parse(lines[li].slice(6));
+                    if (doneData.exit_code !== undefined) exitCode = doneData.exit_code;
+                  } catch(e) {}
+                }
+              }
+            }
             processSSEBuffer(outputEl, buffer);
             // Clear selection
             uninstallSelected.clear();
+            // On success, remove uninstalled apps from the list
+            if (exitCode === 0 && apps && apps.length > 0) {
+              var nameSet = {};
+              apps.forEach(function(a) { nameSet[a.name] = true; });
+              uninstallApps = uninstallApps.filter(function(app) {
+                var appName = app.uninstall_name || app.name || '';
+                return !nameSet[appName];
+              });
+            }
             renderUninstallList();
-            setStatusbar('卸载完成', 'success');
+            setStatusbar(exitCode === 0 ? '卸载完成' : '卸载失败', exitCode === 0 ? 'success' : 'error');
             cleanupUninstall();
             return;
           }
@@ -1227,12 +1474,117 @@
   }
 
 
+  // === Whitelist Management ===
+  const DEFAULT_EXTENSIONS = ['.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.pdf', '.jpg', '.png', '.mp4'];
+
+  function loadWhitelist() {
+    try {
+      var saved = localStorage.getItem('mac-cleaner-whitelist');
+      if (saved) return JSON.parse(saved);
+    } catch(e) {}
+    return DEFAULT_EXTENSIONS.slice();
+  }
+
+  function saveWhitelist(exts) {
+    localStorage.setItem('mac-cleaner-whitelist', JSON.stringify(exts));
+  }
+
+  function renderWhitelistTags() {
+    var container = document.getElementById('whitelist-tags');
+    if (!container) return;
+    var exts = loadWhitelist();
+    if (exts.length === 0) {
+      container.innerHTML = '<span style="font-size:12px;color:var(--text-tertiary)">未设置白名单，所有文件均可被删除</span>';
+      return;
+    }
+    container.innerHTML = '';
+    exts.forEach(function(ext) {
+      var tag = document.createElement('span');
+      tag.style.cssText = 'display:inline-flex;align-items:center;gap:4px;padding:2px 8px;background:var(--bg-sidebar);border:1px solid var(--border-subtle);border-radius:4px;font-size:12px;color:var(--text-primary)';
+      tag.innerHTML = '<span>' + escapeHtml(ext) + '</span><span class="whitelist-remove" data-ext="' + escapeHtml(ext) + '" style="cursor:pointer;color:var(--red);font-weight:bold;margin-left:2px">×</span>';
+      container.appendChild(tag);
+    });
+    // Bind remove handlers
+    container.querySelectorAll('.whitelist-remove').forEach(function(el) {
+      el.addEventListener('click', function() {
+        var ext = this.dataset.ext;
+        var exts = loadWhitelist().filter(function(e) { return e !== ext; });
+        saveWhitelist(exts);
+        renderWhitelistTags();
+        // Re-scan current path if results are visible
+        if (cleanCurrentPath && document.getElementById('clean-results').style.display !== 'none') {
+          scanDisk(cleanCurrentPath);
+        }
+      });
+    });
+  }
+
+  function initWhitelistUI() {
+    var toggle = document.getElementById('whitelist-toggle');
+    var panel = document.getElementById('whitelist-panel');
+    var input = document.getElementById('whitelist-input');
+    var addBtn = document.getElementById('whitelist-add-btn');
+    var resetBtn = document.getElementById('whitelist-reset-btn');
+
+    if (toggle && panel) {
+      toggle.addEventListener('click', function() {
+        var isHidden = panel.style.display === 'none' || panel.style.display === '';
+        panel.style.display = isHidden ? 'block' : 'none';
+        toggle.textContent = isHidden ? '收起设置 ▾' : '展开设置 ▸';
+        if (isHidden) renderWhitelistTags();
+      });
+    }
+
+    if (addBtn && input) {
+      function addWhitelistExt() {
+        var ext = input.value.trim();
+        if (!ext) return;
+        if (!ext.startsWith('.')) ext = '.' + ext;
+        var exts = loadWhitelist();
+        if (!exts.includes(ext)) {
+          exts.push(ext);
+          saveWhitelist(exts);
+          renderWhitelistTags();
+          // Re-scan current path if results are visible
+          if (cleanCurrentPath && document.getElementById('clean-results').style.display !== 'none') {
+            scanDisk(cleanCurrentPath);
+          }
+        }
+        input.value = '';
+      }
+      addBtn.addEventListener('click', addWhitelistExt);
+      input.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') addWhitelistExt();
+      });
+    }
+
+    if (resetBtn) {
+      resetBtn.addEventListener('click', function() {
+        saveWhitelist(DEFAULT_EXTENSIONS.slice());
+        renderWhitelistTags();
+        if (cleanCurrentPath && document.getElementById('clean-results').style.display !== 'none') {
+          scanDisk(cleanCurrentPath);
+        }
+      });
+    }
+
+    renderWhitelistTags();
+  }
+
+  function isWhitelisted(filename) {
+    if (!filename) return false;
+    var exts = loadWhitelist();
+    var lower = filename.toLowerCase();
+    return exts.some(function(ext) { return lower.endsWith(ext.toLowerCase()); });
+  }
+
   // === Clean Module: Disk Scan ===
   let cleanEntries = [];
   let cleanCurrentPath = '';
   let cleanPathHistory = [];
 
   function initCleanEventHandlers() {
+    initWhitelistUI();
     // Path preset buttons
     document.querySelectorAll('.clean-path-btn').forEach(function(btn) {
       btn.addEventListener('click', function() {
@@ -1346,6 +1698,7 @@
 
     var entries = data.entries || [];
     var totalSize = 0;
+    var whitelistExcluded = 0;
     entries.forEach(function(e) { totalSize += e.size || 0; });
 
     if (totalSizeEl) totalSizeEl.textContent = '总计 ' + formatBytes(totalSize);
@@ -1356,15 +1709,29 @@
 
     if (selectAll) selectAll.checked = true;
 
-    if (entries.length === 0) {
-      tableBody.innerHTML = '<tr><td colspan="4" style="padding:20px;text-align:center;color:var(--text-tertiary)">📭 此目录为空</td></tr>';
+    // Filter out whitelisted files
+    var whitelistExcluded = 0;
+    var filteredEntries = entries.filter(function(e) {
+      if (!e.is_dir && isWhitelisted(e.name)) {
+        whitelistExcluded++;
+        return false;
+      }
+      return true;
+    });
+
+    if (filteredEntries.length === 0) {
+      var msg = whitelistExcluded > 0 ? '📭 所有文件均被白名单保护。可展开上方"🛡️ 文件白名单"调整设置。' : '📭 此目录为空';
+      tableBody.innerHTML = '<tr><td colspan="4" style="padding:20px;text-align:center;color:var(--text-tertiary)">' + msg + '</td></tr>';
       updateCleanExecBtn();
       return;
     }
 
     var html = '';
-    for (var i = 0; i < entries.length; i++) {
-      var e = entries[i];
+    if (whitelistExcluded > 0) {
+      html += '<tr><td colspan="4" style="padding:4px 10px;text-align:center;font-size:12px;color:var(--text-tertiary)">🛡️ 白名单已过滤 ' + whitelistExcluded + ' 个文件（.doc/.pdf 等）</td></tr>';
+    }
+    for (var i = 0; i < filteredEntries.length; i++) {
+      var e = filteredEntries[i];
       var icon = e.is_dir ? '📁' : '📄';
       var nameDisplay = escapeHtml(e.name || '');
       var sizeDisplay = e.size_str || '--';
@@ -1453,57 +1820,29 @@
 
     if (paths.length === 0) return;
 
-    // Show risk sheet
-    currentModule = 'clean';
-    currentAction = 'disk-delete';
-
-    sheetTitle.textContent = '确认删除 ' + paths.length + ' 项';
-    sheetRiskLabel.textContent = '⚠️ 中风险';
-    sheetRiskLabel.style.background = '#FF9F0A22';
-    sheetRiskLabel.style.color = '#FF9F0A';
-
-    sheetAffects.innerHTML = '';
-    var h = document.createElement('li');
-    h.style.fontWeight = '600';
-    h.textContent = '将删除以下 ' + paths.length + ' 项，合计 ' + formatBytes(totalSize) + '：';
-    sheetAffects.appendChild(h);
-    names.forEach(function(name) {
-      var li = document.createElement('li');
-      li.textContent = '  • ' + name;
-      sheetAffects.appendChild(li);
-    });
-
-    sheetSafezones.innerHTML = '';
-    var safeMsg = document.createElement('li');
-    safeMsg.textContent = '已删除的数据可通过废纸篓恢复（如未勾选"彻底删除"）';
-    sheetSafezones.appendChild(safeMsg);
-
-    sheetConsent.checked = false;
-    sheetConfirm.disabled = true;
-    overlay.classList.remove('hidden');
-
-    // Override confirm handler for this action
-    var originalConfirm = sheetConfirm._cleanHandler;
-    function handleConfirm() {
-      overlay.classList.add('hidden');
-      doCleanDelete(paths, names);
+    // Remove whitelisted paths from deletion
+    var filteredPaths = [];
+    var filteredNames = [];
+    var whitelistBlocked = 0;
+    for (var pi = 0; pi < paths.length; pi++) {
+      if (isWhitelisted(names[pi])) {
+        whitelistBlocked++;
+      } else {
+        filteredPaths.push(paths[pi]);
+        filteredNames.push(names[pi]);
+      }
     }
-    sheetConfirm._cleanHandler = handleConfirm;
+    if (whitelistBlocked > 0) {
+      setStatusbar('🛡️ 白名单阻止了 ' + whitelistBlocked + ' 个文件被删除', '');
+    }
+    if (filteredPaths.length === 0) {
+      setStatusbar('没有可删除的文件（均被白名单保护）', 'error');
+      if (execBtn) execBtn.disabled = false;
+      return;
+    }
 
-    // Remove old listeners to avoid duplicates
-    var newConfirm = sheetConfirm.cloneNode(true);
-    sheetConfirm.parentNode.replaceChild(newConfirm, sheetConfirm);
-    // Re-assign reference
-    window.location.reload; // no-op, we reassign below
-    // Actually, we need to rewire. Let me use a simpler approach:
-    // Directly set onclick
-    sheetConfirm.onclick = function() {
-      overlay.classList.add('hidden');
-      doCleanDelete(paths, names);
-    };
-    sheetConsent.onchange = function() {
-      sheetConfirm.disabled = !sheetConsent.checked;
-    };
+    // Directly execute since user already chose items to clean
+    doCleanDelete(filteredPaths, filteredNames);
   }
 
   async function doCleanDelete(paths, names) {

@@ -12,3 +12,14 @@ Thumbs.db
 # Logs
 /tmp/
 *.log
+
+# Tauri / Rust build artifacts
+src-tauri/target/
+src-tauri/binaries/
+src-tauri/icons/
+src-tauri/gen/
+src-tauri/Cargo.lock
+
+# DMG package
+MacCleaner.dmg
+node_modules/

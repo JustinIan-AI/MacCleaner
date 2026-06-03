@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	_ "embed"
 	"encoding/json"
@@ -161,6 +162,25 @@ func extractModule(args []string) string {
 	return ""
 }
 
+// stdinInputForModule returns the appropriate stdin input to auto-confirm
+// interactive prompts for a given mole subcommand.
+func stdinInputForModule(args []string) string {
+	for _, a := range args {
+		switch a {
+		case "installer", "purge":
+			// TUI mode: 'a' selects all items, Enter confirms selection, Enter confirms delete
+			return "a\n\n"
+		case "uninstall":
+			// Single prompt: .Proceed? [y/N]. → auto-confirms, second prompt auto-confirms on pipe close
+			return "y\n"
+		case "clean", "optimize":
+			// Non-interactive: just in case
+			return "y\n"
+		}
+	}
+	return "y\n"
+}
+
 // sseHandler returns an HTTP handler that runs a mo command and streams output via SSE.
 func sseHandler(args ...string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -198,6 +218,8 @@ func sseHandler(args ...string) http.HandlerFunc {
 		}
 
 		cmd := exec.CommandContext(ctx, moPath, args...)
+
+		cmd.Stdin = bytes.NewBufferString(stdinInputForModule(args))
 
 		stdout, err := cmd.StdoutPipe()
 		if err != nil {
@@ -295,11 +317,11 @@ func sendSSEError(w http.ResponseWriter, flusher http.Flusher, msg string) {
 
 // DiskEntry represents a file or directory in scan results
 type DiskEntry struct {
-	Name   string `json:"name"`
-	Path   string `json:"path"`
-	Size   int64  `json:"size"`
-	IsDir  bool   `json:"is_dir"`
-	IsFile bool   `json:"is_file"`
+	Name    string `json:"name"`
+	Path    string `json:"path"`
+	Size    int64  `json:"size"`
+	IsDir   bool   `json:"is_dir"`
+	IsFile  bool   `json:"is_file"`
 	SizeStr string `json:"size_str"`
 }
 
@@ -431,9 +453,9 @@ func handleDiskScan(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"path":       req.Path,
-		"entries":    diskEntries,
-		"total_size": totalSize,
+		"path":        req.Path,
+		"entries":     diskEntries,
+		"total_size":  totalSize,
 		"total_count": totalCount,
 	})
 }
@@ -496,6 +518,409 @@ func handleDiskDelete(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// Installer scan paths (from mo installer.sh)
+var installerScanPaths = []string{
+	os.ExpandEnv("${HOME}/Downloads"),
+	os.ExpandEnv("${HOME}/Desktop"),
+	os.ExpandEnv("${HOME}/Documents"),
+	os.ExpandEnv("${HOME}/Public"),
+	os.ExpandEnv("${HOME}/Library/Downloads"),
+	"/Users/Shared",
+	"/Users/Shared/Downloads",
+}
+
+type InstallerEntry struct {
+	Name   string `json:"name"`
+	Path   string `json:"path"`
+	Size   int64  `json:"size"`
+	Source string `json:"source"`
+}
+
+// scanInstallerFiles scans common download directories for installer packages.
+func scanInstallerFiles() []InstallerEntry {
+	var entries []InstallerEntry
+	for _, basePath := range installerScanPaths {
+		info, err := os.Stat(basePath)
+		if err != nil || !info.IsDir() {
+			continue
+		}
+		filepath.Walk(basePath, func(path string, info os.FileInfo, err error) error {
+			if err != nil || info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+				return nil
+			}
+			name := strings.ToLower(info.Name())
+			if strings.HasSuffix(name, ".dmg") || strings.HasSuffix(name, ".pkg") ||
+				strings.HasSuffix(name, ".mpkg") || strings.HasSuffix(name, ".iso") ||
+				strings.HasSuffix(name, ".xip") || strings.HasSuffix(name, ".zip") {
+				source := filepath.Dir(path)
+				if strings.HasPrefix(source, os.ExpandEnv("${HOME}")) {
+					source = strings.TrimPrefix(source, os.ExpandEnv("${HOME}/")+"")
+				}
+				entries = append(entries, InstallerEntry{
+					Name:   info.Name(),
+					Path:   path,
+					Size:   info.Size(),
+					Source: source,
+				})
+			}
+			// Limit depth for performance
+			depth := 0
+			rel := strings.TrimPrefix(path, basePath)
+			depth = strings.Count(rel, string(filepath.Separator))
+			if depth > 3 {
+				return filepath.SkipDir
+			}
+			return nil
+		})
+	}
+	// Filter out entries with empty paths or paths that don't exist
+	var validEntries []InstallerEntry
+	for _, e := range entries {
+		if e.Path == "" {
+			continue
+		}
+		cleaned := filepath.Clean(os.ExpandEnv(strings.Replace(e.Path, "~", "${HOME}", 1)))
+		if _, err := os.Stat(cleaned); os.IsNotExist(err) {
+			continue
+		}
+		validEntries = append(validEntries, e)
+	}
+	entries = validEntries
+
+	if entries == nil {
+		entries = []InstallerEntry{}
+	}
+	return entries
+}
+
+// scanPurgeFiles runs mo purge --dry-run --debug and parses paths from output.
+func scanPurgeFiles() ([]InstallerEntry, error) {
+	moPath, err := exec.LookPath("mo")
+	if err != nil {
+		return nil, fmt.Errorf("mo not found")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, moPath, "purge", "--dry-run", "--debug")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		// For mo purge, exit code 2 means "nothing to clean" - not an error
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 2 {
+			// Nothing to clean - continue with empty output
+			out = []byte{}
+		} else if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+			// Try without --debug
+			cmd2 := exec.CommandContext(ctx, moPath, "purge", "--dry-run")
+			out2, err2 := cmd2.CombinedOutput()
+			if err2 != nil {
+				if exitErr2, ok := err2.(*exec.ExitError); ok && exitErr2.ExitCode() == 2 {
+					out = []byte{}
+				} else {
+					return nil, fmt.Errorf("purge scan failed: %v\n%s", err2, string(out2))
+				}
+			} else {
+				out = out2
+			}
+		} else {
+			return nil, fmt.Errorf("purge scan failed: %v\n%s", err, string(out))
+		}
+	}
+
+	var entries []InstallerEntry
+	seen := make(map[string]bool)
+	lines := strings.Split(string(out), "\n")
+	for _, line := range lines {
+		// Try to parse paths from mo purge output
+		// Format examples: "node_modules    123.5MB   /path/to/project"
+		// or: "  ○ /path/to/project/node_modules"
+		cleaned := strings.TrimSpace(line)
+		// Skip empty and header lines
+		if cleaned == "" || strings.HasPrefix(cleaned, "→") || strings.HasPrefix(cleaned, "DRY") || strings.HasPrefix(cleaned, "[") {
+			continue
+		}
+		// Try to extract path: look for lines with size + path patterns
+		// Match: path pattern with size info
+		parts := strings.Fields(cleaned)
+		if len(parts) >= 2 {
+			// Check if last part looks like a filesystem path
+			lastPart := parts[len(parts)-1]
+			if strings.HasPrefix(lastPart, "/") || strings.HasPrefix(lastPart, "~") {
+				// The path is the last part
+				filePath := lastPart
+				if !seen[filePath] {
+					seen[filePath] = true
+					name := filepath.Base(filePath)
+					if name == "." || name == "/" {
+						name = filepath.Base(filepath.Dir(filePath))
+					}
+					entries = append(entries, InstallerEntry{
+						Name: name,
+						Path: filePath,
+						Size: 0,
+					})
+				}
+			}
+		}
+		// Also try matching: "○ /path" or "- /path" patterns
+		if strings.Contains(cleaned, "/") {
+			for _, word := range parts {
+				if strings.HasPrefix(word, "/") || strings.HasPrefix(word, "~") {
+					if !seen[word] {
+						seen[word] = true
+						name := filepath.Base(word)
+						entries = append(entries, InstallerEntry{
+							Name: name,
+							Path: word,
+							Size: 0,
+						})
+					}
+				}
+			}
+		}
+	}
+
+	// Filter out entries with empty paths or paths that don't exist
+	var validEntries []InstallerEntry
+	for _, e := range entries {
+		if e.Path == "" {
+			continue
+		}
+		cleaned := filepath.Clean(os.ExpandEnv(strings.Replace(e.Path, "~", "${HOME}", 1)))
+		if _, err := os.Stat(cleaned); os.IsNotExist(err) {
+			continue
+		}
+		validEntries = append(validEntries, e)
+	}
+	entries = validEntries
+
+	if entries == nil {
+		entries = []InstallerEntry{}
+	}
+	return entries, nil
+}
+func handlePurgeScan(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	entries, err := scanPurgeFiles()
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	json.NewEncoder(w).Encode(entries)
+}
+
+func handleInstallerScan(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	entries := scanInstallerFiles()
+	json.NewEncoder(w).Encode(entries)
+}
+
+// handleModuleDeleteStream deletes items by path (bypasses mo TUI for installer/purge) and streams via SSE.
+func handleModuleDeleteStream(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	var req struct {
+		Module string `json:"module"`
+		Items  []struct {
+			Name string `json:"name"`
+			Path string `json:"path"`
+		} `json:"items"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sendSSEError(w, flusher, "无效的JSON: "+err.Error())
+		return
+	}
+	if len(req.Items) == 0 {
+		sendSSEError(w, flusher, "没有指定要删除的项目")
+		return
+	}
+
+	// Development safety: set MAC_CLEANER_DRY_RUN=1 to preview without deleting
+	dryRun := os.Getenv("MAC_CLEANER_DRY_RUN") == "1"
+	if dryRun {
+		sendSSELine(w, flusher, "stdout", "🧪 DRY RUN 模式 - 仅预览，不会执行删除操作")
+	}
+
+	// Resolve paths for installer/purge modules if items lack paths
+	if len(req.Items) > 0 && req.Items[0].Path == "" {
+		var resolvedEntries []InstallerEntry
+		if req.Module == "installer" {
+			resolvedEntries = scanInstallerFiles()
+		} else if req.Module == "purge" {
+			var purgeErr error
+			resolvedEntries, purgeErr = scanPurgeFiles()
+			if purgeErr != nil {
+				sendSSEError(w, flusher, "扫描构建产物失败: "+purgeErr.Error())
+				return
+			}
+		}
+
+		if len(resolvedEntries) > 0 {
+			// Build name->entry map for matching
+			nameMap := make(map[string]InstallerEntry)
+			for _, e := range resolvedEntries {
+				key := strings.ToLower(e.Name)
+				nameMap[key] = e
+			}
+
+			var resolvedItems []struct {
+				Name string `json:"name"`
+				Path string `json:"path"`
+			}
+			for _, item := range req.Items {
+				itemName := strings.ToLower(item.Name)
+				if match, ok := nameMap[itemName]; ok {
+					resolvedItems = append(resolvedItems, struct {
+						Name string `json:"name"`
+						Path string `json:"path"`
+					}{Name: match.Name, Path: match.Path})
+				} else {
+					// Try matching by removing extension
+					for key, entry := range nameMap {
+						entryBase := strings.TrimSuffix(key, filepath.Ext(key))
+						itemBase := strings.TrimSuffix(itemName, filepath.Ext(itemName))
+						if entryBase == itemBase {
+							resolvedItems = append(resolvedItems, struct {
+								Name string `json:"name"`
+								Path string `json:"path"`
+							}{Name: entry.Name, Path: entry.Path})
+							break
+						}
+					}
+				}
+			}
+			if len(resolvedItems) > 0 {
+				req.Items = resolvedItems
+			}
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
+	defer cancel()
+
+	if req.Module != "" {
+		registerCancel(req.Module, cancel)
+		defer unregisterCancel(req.Module)
+	}
+
+	startTime := time.Now()
+	totalSuccess := 0
+	totalFail := 0
+	totalSkipped := 0
+
+	for _, item := range req.Items {
+		select {
+		case <-ctx.Done():
+			// Send cancellation done
+			doneData, _ := json.Marshal(map[string]interface{}{
+				"exit_code":   -1,
+				"duration_ms": time.Since(startTime).Milliseconds(),
+			})
+			fmt.Fprintf(w, "event: done\ndata: %s\n\n", string(doneData))
+			flusher.Flush()
+			return
+		default:
+		}
+
+		path := item.Path
+		if path == "" {
+			totalSkipped++
+			data, _ := json.Marshal(map[string]interface{}{
+				"line":   "⚠️ 跳过 " + item.Name + ": 路径为空",
+				"stream": "stderr",
+			})
+			fmt.Fprintf(w, "event: stderr\ndata: %s\n\n", string(data))
+			flusher.Flush()
+			continue
+		}
+
+		cleaned := filepath.Clean(path)
+		// Safety check: prevent deleting root or home
+		home := os.Getenv("HOME")
+		if cleaned == "/" || (home != "" && cleaned == home) {
+			totalSkipped++
+			data, _ := json.Marshal(map[string]interface{}{
+				"line":   "⚠️ 跳过 " + item.Name + ": 禁止删除系统关键目录",
+				"stream": "stderr",
+			})
+			fmt.Fprintf(w, "event: stderr\ndata: %s\n\n", string(data))
+			flusher.Flush()
+			continue
+		}
+
+		if _, err := os.Stat(cleaned); os.IsNotExist(err) {
+			totalSkipped++
+			data, _ := json.Marshal(map[string]interface{}{
+				"line":   "⚠️ 跳过 " + item.Name + ": 路径不存在",
+				"stream": "stderr",
+			})
+			fmt.Fprintf(w, "event: stderr\ndata: %s\n\n", string(data))
+			flusher.Flush()
+			continue
+		}
+
+		if dryRun {
+			totalSuccess++
+			data, _ := json.Marshal(map[string]interface{}{
+				"line":   "🧪 [DRY RUN] 将删除 " + item.Name,
+				"stream": "stdout",
+			})
+			fmt.Fprintf(w, "event: stdout\ndata: %s\n\n", string(data))
+			flusher.Flush()
+			continue
+		}
+
+		if err := os.RemoveAll(cleaned); err != nil {
+			totalFail++
+			data, _ := json.Marshal(map[string]interface{}{
+				"line":   "❌ 删除失败 " + item.Name + ": " + err.Error(),
+				"stream": "stderr",
+			})
+			fmt.Fprintf(w, "event: stderr\ndata: %s\n\n", string(data))
+			flusher.Flush()
+		} else {
+			totalSuccess++
+			data, _ := json.Marshal(map[string]interface{}{
+				"line":   "✅ 已删除 " + item.Name,
+				"stream": "stdout",
+			})
+			fmt.Fprintf(w, "event: stdout\ndata: %s\n\n", string(data))
+			flusher.Flush()
+		}
+	}
+
+	exitCode := 0
+	if totalFail > 0 {
+		exitCode = 1
+	}
+	dur := time.Since(startTime).Milliseconds()
+	summary := fmt.Sprintf("成功 %d", totalSuccess)
+	if totalSkipped > 0 {
+		summary += fmt.Sprintf(", 跳过 %d", totalSkipped)
+	}
+	if totalFail > 0 {
+		summary += fmt.Sprintf(", 失败 %d", totalFail)
+	}
+	doneData, _ := json.Marshal(map[string]interface{}{
+		"exit_code":   exitCode,
+		"duration_ms": dur,
+		"summary":     summary,
+	})
+	fmt.Fprintf(w, "event: done\ndata: %s\n\n", string(doneData))
+	flusher.Flush()
+}
 func formatSize(bytes int64) string {
 	if bytes < 1024 {
 		return fmt.Sprintf("%dB", bytes)
@@ -574,6 +999,9 @@ func main() {
 	mux.HandleFunc("/api/purge/run", sseHandler("purge"))
 	mux.HandleFunc("/api/installer/dry-run", sseHandler("installer", "--dry-run"))
 	mux.HandleFunc("/api/installer/run", sseHandler("installer"))
+	mux.HandleFunc("/api/installer/scan", handleInstallerScan)
+	mux.HandleFunc("/api/purge/scan", handlePurgeScan)
+	mux.HandleFunc("/api/module/delete-stream", handleModuleDeleteStream)
 	mux.HandleFunc("/api/optimize/dry-run", sseHandler("optimize", "--dry-run"))
 	mux.HandleFunc("/api/optimize/run", sseHandler("optimize"))
 
@@ -598,7 +1026,53 @@ func handleUninstallList(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(output))
 }
 
-// handleUninstallRunSelected runs mo uninstall with selected app names and streams via SSE.
+// AppInfo represents an app to be uninstalled.
+type AppInfo struct {
+	Name     string `json:"name"`
+	Path     string `json:"path"`
+	BundleID string `json:"bundle_id"`
+}
+
+// getResidualPaths returns known residual file paths for a given bundle ID.
+func getResidualPaths(bundleID string) []string {
+	if bundleID == "" {
+		return nil
+	}
+	home := os.Getenv("HOME")
+	if home == "" {
+		return nil
+	}
+	return []string{
+		filepath.Join(home, "Library/Preferences", bundleID+".plist"),
+		filepath.Join(home, "Library/Caches", bundleID),
+		filepath.Join(home, "Library/Application Support", bundleID),
+		filepath.Join(home, "Library/Saved Application State", bundleID),
+		filepath.Join(home, "Library/Logs", bundleID),
+		filepath.Join(home, "Library/Containers", bundleID),
+		filepath.Join(home, "Library/HTTPStorages", bundleID),
+		filepath.Join(home, "Library/WebKit", bundleID),
+		filepath.Join(home, "Library/Group Containers", bundleID),
+	}
+}
+
+// sendSSELine writes a single SSE event line.
+func sendSSELine(w http.ResponseWriter, flusher http.Flusher, stream, line string) {
+	data, _ := json.Marshal(map[string]string{"line": line, "stream": stream})
+	fmt.Fprintf(w, "event: %s\ndata: %s\n\n", stream, string(data))
+	flusher.Flush()
+}
+
+// sendSSEDone sends the done SSE event.
+func sendSSEDone(w http.ResponseWriter, flusher http.Flusher, exitCode int, durationMs int64) {
+	doneData, _ := json.Marshal(map[string]interface{}{
+		"exit_code":   exitCode,
+		"duration_ms": durationMs,
+	})
+	fmt.Fprintf(w, "event: done\ndata: %s\n\n", string(doneData))
+	flusher.Flush()
+}
+
+// handleUninstallRunSelected directly deletes apps and residual files, streaming progress via SSE.
 func handleUninstallRunSelected(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "POST required", http.StatusMethodNotAllowed)
@@ -606,7 +1080,7 @@ func handleUninstallRunSelected(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Apps []string `json:"apps"`
+		Apps []AppInfo `json:"apps"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
@@ -629,100 +1103,101 @@ func handleUninstallRunSelected(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
 	defer cancel()
 
-	moPath, err := exec.LookPath("mo")
-	if err != nil {
-		sendSSEError(w, flusher, "mo not found. Install with: brew install mo")
-		return
-	}
-
-	// Register cancel for this module
 	registerCancel("uninstall", cancel)
 	defer unregisterCancel("uninstall")
 
-	args := append([]string{"uninstall", "--dry-run"}, req.Apps...)
-	cmd := exec.CommandContext(ctx, moPath, args...)
-
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		http.Error(w, "Failed to create stdout pipe", http.StatusInternalServerError)
-		return
-	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		http.Error(w, "Failed to create stderr pipe", http.StatusInternalServerError)
-		return
-	}
-
-	if err := cmd.Start(); err != nil {
-		sendSSEError(w, flusher, err.Error())
-		return
-	}
-
-	type line struct {
-		Text   string `json:"line"`
-		Stream string `json:"stream"`
-	}
-	lines := make(chan line, 100)
-
-	go func() {
-		scanner := bufio.NewScanner(stdout)
-		for scanner.Scan() {
-			lines <- line{Text: scanner.Text(), Stream: "stdout"}
-		}
-	}()
-	go func() {
-		scanner := bufio.NewScanner(stderr)
-		for scanner.Scan() {
-			lines <- line{Text: scanner.Text(), Stream: "stderr"}
-		}
-	}()
-
+	home := os.Getenv("HOME")
 	startTime := time.Now()
-	done := make(chan error, 1)
-	go func() {
-		done <- cmd.Wait()
-	}()
+	totalSuccess := 0
+	totalFail := 0
 
-	streamLines := true
-	for streamLines {
+	for _, app := range req.Apps {
 		select {
-		case l := <-lines:
-			data, _ := json.Marshal(l)
-			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", l.Stream, string(data))
-			flusher.Flush()
-		case err := <-done:
-			// Drain remaining lines
-			for {
-				select {
-				case l := <-lines:
-					data, _ := json.Marshal(l)
-					fmt.Fprintf(w, "event: %s\ndata: %s\n\n", l.Stream, string(data))
-					flusher.Flush()
-				default:
-					goto drainDone
-				}
-			}
-			drainDone:
-			exitCode := 0
-			if err != nil {
-				if exitErr, ok := err.(*exec.ExitError); ok {
-					exitCode = exitErr.ExitCode()
-				} else {
-					exitCode = 1
-				}
-			}
-			dur := time.Since(startTime).Milliseconds()
-			doneData, _ := json.Marshal(map[string]interface{}{
-				"exit_code":   exitCode,
-				"duration_ms": dur,
-			})
-			fmt.Fprintf(w, "event: done\ndata: %s\n\n", string(doneData))
-			flusher.Flush()
-			streamLines = false
 		case <-ctx.Done():
-			fmt.Fprintf(w, "event: done\ndata: {\"exit_code\":-1,\"duration_ms\":%d}\n\n", time.Since(startTime).Milliseconds())
-			flusher.Flush()
-			streamLines = false
+			sendSSEDone(w, flusher, -1, time.Since(startTime).Milliseconds())
+			return
+		default:
+		}
+
+		appPath := app.Path
+		if strings.HasPrefix(appPath, "~") && home != "" {
+			appPath = filepath.Join(home, appPath[1:])
+		}
+		appPath = filepath.Clean(appPath)
+
+		if appPath == "/" || (home != "" && appPath == home) {
+			totalFail++
+			sendSSELine(w, flusher, "stderr", "\u26a0\ufe0f \u8df3\u8fc7 "+app.Name+": \u7981\u6b62\u5220\u9664\u7cfb\u7edf\u5173\u952e\u76ee\u5f55")
+			continue
+		}
+
+		var deletedPaths []string
+
+		// 1. Delete the .app bundle
+		if appPath != "" {
+			if info, err := os.Stat(appPath); err == nil {
+				if info.IsDir() && (strings.HasSuffix(appPath, ".app") || strings.HasSuffix(appPath, ".prefPane")) {
+					if err := os.RemoveAll(appPath); err != nil {
+						totalFail++
+						sendSSELine(w, flusher, "stderr", "\u274c "+app.Name+": \u5220\u9664\u5e94\u7528\u5931\u8d25: "+err.Error())
+						continue
+					}
+					deletedPaths = append(deletedPaths, appPath)
+					sendSSELine(w, flusher, "stdout", "\u2705 "+app.Name+": \u5df2\u5220\u9664\u5e94\u7528")
+				} else {
+					if err := os.RemoveAll(appPath); err != nil {
+						sendSSELine(w, flusher, "stderr", "\u26a0\ufe0f "+app.Name+": \u5c1d\u8bd5\u5220\u9664\u5931\u8d25: "+err.Error())
+					} else {
+						deletedPaths = append(deletedPaths, appPath)
+						sendSSELine(w, flusher, "stdout", "\u2705 "+app.Name+": \u5df2\u5220\u9664")
+					}
+				}
+			} else if os.IsNotExist(err) {
+				sendSSELine(w, flusher, "stderr", "\u26a0\ufe0f "+app.Name+": \u5e94\u7528\u4e0d\u5b58\u5728\u4e8e "+appPath)
+			} else {
+				sendSSELine(w, flusher, "stderr", "\u26a0\ufe0f "+app.Name+": \u65e0\u6cd5\u8bbf\u95ee "+appPath+": "+err.Error())
+			}
+		}
+
+		// 2. Clean up residual files by bundle_id
+		if app.BundleID != "" {
+			residualPaths := getResidualPaths(app.BundleID)
+			residualCount := 0
+			for _, rp := range residualPaths {
+				if info, err := os.Stat(rp); err == nil {
+					var removeErr error
+					if info.IsDir() {
+						removeErr = os.RemoveAll(rp)
+					} else {
+						removeErr = os.Remove(rp)
+					}
+					if removeErr == nil {
+						deletedPaths = append(deletedPaths, rp)
+						residualCount++
+					}
+				}
+			}
+			if residualCount > 0 {
+				sendSSELine(w, flusher, "stdout", "   \U0001f9f9 \u5df2\u6e05\u7406 "+strconv.Itoa(residualCount)+" \u4e2a\u6b8b\u7559\u6587\u4ef6")
+			}
+		}
+
+		if len(deletedPaths) > 0 {
+			totalSuccess++
 		}
 	}
+
+	exitCode := 0
+	if totalFail > 0 {
+		exitCode = 1
+	}
+	dur := time.Since(startTime).Milliseconds()
+	doneData, _ := json.Marshal(map[string]interface{}{
+		"exit_code":   exitCode,
+		"duration_ms": dur,
+		"removed":     totalSuccess,
+		"failed":      totalFail,
+	})
+	fmt.Fprintf(w, "event: done\ndata: %s\n\n", string(doneData))
+	flusher.Flush()
 }

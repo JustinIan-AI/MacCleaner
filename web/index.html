@@ -85,6 +85,24 @@
           </div>
         </div>
 
+        <!-- Whitelist Config -->
+        <div id="clean-whitelist-section" style="margin-bottom:12px;padding:10px 14px;background:var(--bg-card);border:1px solid var(--border-subtle);border-radius:8px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+            <span style="font-size:12px;font-weight:600;color:var(--text-secondary)">🛡️ 文件白名单（保护以下后缀名的文件不被删除）</span>
+            <button class="btn btn-outline btn-sm" id="whitelist-toggle" style="font-size:11px">展开设置 ▸</button>
+          </div>
+          <div id="whitelist-panel" style="display:none;margin-top:8px">
+            <div style="display:flex;gap:6px;margin-bottom:6px;flex-wrap:wrap" id="whitelist-tags"></div>
+            <div style="display:flex;gap:6px;align-items:center">
+              <input type="text" id="whitelist-input" placeholder="输入后缀名，如 .docx"
+                     style="flex:1;padding:5px 8px;border:1px solid var(--border);border-radius:4px;font-size:12px;background:var(--bg-card);color:var(--text-primary);max-width:180px">
+              <button class="btn btn-secondary btn-sm" id="whitelist-add-btn" style="font-size:11px">+ 添加</button>
+              <button class="btn btn-outline btn-sm" id="whitelist-reset-btn" style="font-size:11px">恢复默认</button>
+            </div>
+            <div style="font-size:11px;color:var(--text-tertiary);margin-top:4px">默认白名单: .doc .docx .xls .xlsx .ppt .pptx .pdf .jpg .png .mp4</div>
+          </div>
+        </div>
+
         <!-- Scan Results -->
         <div id="clean-results" style="display:none">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
@@ -117,8 +135,8 @@
         <!-- Standard clean interface (dry-run / run) -->
         <div id="clean-standard-section" style="margin-top:16px">
           <div class="btn-group">
-            <button class="btn btn-secondary" data-action="dry-run" data-module="clean">🔍 扫描预览 (mole)</button>
-            <button class="btn btn-primary" data-action="run" data-module="clean">⚡ 执行清理 (mole)</button>
+            <button class="btn btn-secondary" data-action="dry-run" data-module="clean">🔍 扫描预览</button>
+            <button class="btn btn-primary" data-action="run" data-module="clean">⚡ 执行清理</button>
           </div>
           <div class="output-area" id="output-clean"></div>
         </div>

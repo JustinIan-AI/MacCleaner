@@ -1,6 +1,6 @@
 # MacCleaner 🧹
 
-macOS 系统清理工具，基于 [mole](https://github.com/tw93/Mole) 构建的 Web 界面。
+macOS 系统清理工具，基于 [mole](https://github.com/tw93/Mole) 构建的 Web 界面,降低使用门槛，边界清理你的Mac笔记本。
 
 ## 功能
 
