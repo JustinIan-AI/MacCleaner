@@ -1,0 +1,14 @@
+# Binary
+mole-tool
+mole-tool.exe
+
+# Backups
+*.bak
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+/tmp/
+*.log

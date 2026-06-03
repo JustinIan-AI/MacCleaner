@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Mole 助手 — macOS 系统清理</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<!-- macOS Title Bar -->
+<header id="titlebar">
+  <div class="traffic-lights">
+    <span class="dot dot-red"></span>
+    <span class="dot dot-yellow"></span>
+    <span class="dot dot-green"></span>
+  </div>
+  <span class="titlebar-title">Mole 助手</span>
+  <button id="theme-toggle" class="theme-btn" title="切换主题">🌙</button>
+</header>
+
+<div id="app-layout">
+  <!-- Sidebar Navigation -->
+  <nav id="sidebar">
+    <ul class="nav-list">
+      <li><a href="#status" class="nav-item" data-module="status"><span class="nav-icon">🩺</span><span class="nav-label">系统健康</span><span class="risk-badge risk-none">只读</span></a></li>
+      <li><a href="#clean" class="nav-item" data-module="clean"><span class="nav-icon">🧹</span><span class="nav-label">深度清理</span><span class="risk-badge risk-medium">中等</span></a></li>
+      <li><a href="#uninstall" class="nav-item" data-module="uninstall"><span class="nav-icon">🗑️</span><span class="nav-label">卸载应用</span><span class="risk-badge risk-high">高风险</span></a></li>
+      <li><a href="#purge" class="nav-item" data-module="purge"><span class="nav-icon">🏗️</span><span class="nav-label">构建产物</span><span class="risk-badge risk-low">低风险</span></a></li>
+      <li><a href="#optimize" class="nav-item" data-module="optimize"><span class="nav-icon">⚙️</span><span class="nav-label">系统优化</span><span class="risk-badge risk-medium">中等</span></a></li>
+      <li><a href="#installer" class="nav-item" data-module="installer"><span class="nav-icon">🗂️</span><span class="nav-label">安装包清理</span><span class="risk-badge risk-low">低风险</span></a></li>
+      <li class="nav-divider"></li>
+      <li><a href="#analyze" class="nav-item" data-module="analyze"><span class="nav-icon">📊</span><span class="nav-label">磁盘分析</span><span class="risk-badge risk-none">只读</span></a></li>
+      <li><a href="#history" class="nav-item" data-module="history"><span class="nav-icon">📋</span><span class="nav-label">操作历史</span><span class="risk-badge risk-none">只读</span></a></li>
+    </ul>
+  </nav>
+
+  <!-- Main Content Area -->
+  <main id="content">
+    <div id="page-placeholder" class="page">
+      <div class="welcome">
+        <h1>🛠️ Mole 助手</h1>
+        <p>macOS 系统清理可视化工具</p>
+        <div class="welcome-cards">
+          <div class="welcome-card" data-module="status"><span class="wc-icon">🩺</span><span class="wc-label">系统健康</span><span class="wc-desc">检查磁盘、内存、CPU</span></div>
+          <div class="welcome-card" data-module="clean"><span class="wc-icon">🧹</span><span class="wc-label">深度清理</span><span class="wc-desc">清理系统/用户缓存</span></div>
+          <div class="welcome-card" data-module="uninstall"><span class="wc-icon">🗑️</span><span class="wc-label">卸载应用</span><span class="wc-desc">彻底移除应用残留</span></div>
+          <div class="welcome-card" data-module="purge"><span class="wc-icon">🏗️</span><span class="wc-label">构建产物</span><span class="wc-desc">清理开发构建缓存</span></div>
+          <div class="welcome-card" data-module="optimize"><span class="wc-icon">⚙️</span><span class="wc-label">系统优化</span><span class="wc-desc">刷新系统服务</span></div>
+          <div class="welcome-card" data-module="installer"><span class="wc-icon">🗂️</span><span class="wc-label">安装包清理</span><span class="wc-desc">移除 .dmg/.pkg 文件</span></div>
+        </div>
+        <p class="welcome-hint">← 从左侧选择一个模块开始</p>
+      </div>
+    </div>
+
+    <!-- Status Page -->
+    <div id="page-status" class="page hidden">
+      <div class="page-header"><h2>🩺 系统健康</h2></div>
+      <div class="page-body" id="status-body">
+        <div class="loading">加载中...</div>
+      </div>
+    </div>
+
+    <!-- Clean Page -->
+    <div id="page-clean" class="page hidden">
+      <div class="page-header"><h2>🧹 深度清理</h2></div>
+      <div class="page-body">
+        <p class="page-desc">扫描文件夹空间占用，选择目标路径进行清理。缓存会由系统自动重建。</p>
+
+        <!-- Path Selection -->
+        <div id="clean-path-section" style="margin-bottom:16px">
+          <div style="font-size:13px;font-weight:600;color:var(--text-secondary);margin-bottom:8px">选择扫描路径</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+            <button class="btn btn-secondary btn-sm clean-path-btn" data-path="~/Library/Caches">📁 用户缓存</button>
+            <button class="btn btn-secondary btn-sm clean-path-btn" data-path="~/Library/Logs">📋 系统日志</button>
+            <button class="btn btn-secondary btn-sm clean-path-btn" data-path="~/Library/Developer">🛠 开发缓存</button>
+            <button class="btn btn-secondary btn-sm clean-path-btn" data-path="~/Downloads">📥 下载文件夹</button>
+            <button class="btn btn-secondary btn-sm clean-path-btn" data-path="~/.Trash">🗑 废纸篓</button>
+            <button class="btn btn-outline btn-sm clean-path-btn" data-path="/">💿 全盘扫描</button>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input type="text" id="clean-custom-path" placeholder="输入自定义路径（如 ~/Library/Caches/com.apple.Safari）"
+                   style="flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;background:var(--bg-card);color:var(--text-primary)">
+            <button class="btn btn-primary btn-sm" id="clean-scan-btn">🔍 扫描</button>
+          </div>
+        </div>
+
+        <!-- Scan Results -->
+        <div id="clean-results" style="display:none">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <div>
+              <span style="font-size:13px;font-weight:600" id="clean-current-path"></span>
+              <span style="font-size:12px;color:var(--text-secondary);margin-left:8px" id="clean-total-size"></span>
+            </div>
+            <div style="display:flex;gap:6px">
+              <button class="btn btn-secondary btn-sm" id="clean-up-btn" style="display:none">⬆ 上级目录</button>
+              <button class="btn btn-primary btn-sm" id="clean-execute-btn" disabled>🧹 清理选中项</button>
+            </div>
+          </div>
+          <div id="clean-table-wrapper" style="border:1px solid var(--border-subtle);border-radius:8px;max-height:500px;overflow-y:auto">
+            <table class="clean-table" style="width:100%;border-collapse:collapse">
+              <thead>
+                <tr style="background:var(--bg-sidebar);position:sticky;top:0">
+                  <th style="width:36px;padding:8px 10px;text-align:center"><input type="checkbox" id="clean-select-all" checked></th>
+                  <th style="padding:8px 10px;text-align:left;font-size:12px;font-weight:600;color:var(--text-tertiary)">名称</th>
+                  <th style="width:100px;padding:8px 10px;text-align:right;font-size:12px;font-weight:600;color:var(--text-tertiary)">大小</th>
+                  <th style="width:80px;padding:8px 10px;text-align:center;font-size:12px;font-weight:600;color:var(--text-tertiary)">操作</th>
+                </tr>
+              </thead>
+              <tbody id="clean-table-body">
+                <tr><td colspan="4" style="padding:20px;text-align:center;color:var(--text-tertiary)">选择路径后点击"扫描"</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Standard clean interface (dry-run / run) -->
+        <div id="clean-standard-section" style="margin-top:16px">
+          <div class="btn-group">
+            <button class="btn btn-secondary" data-action="dry-run" data-module="clean">🔍 扫描预览 (mole)</button>
+            <button class="btn btn-primary" data-action="run" data-module="clean">⚡ 执行清理 (mole)</button>
+          </div>
+          <div class="output-area" id="output-clean"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Uninstall Page -->
+    <div id="page-uninstall" class="page hidden">
+      <div class="page-header"><h2>🗑️ 卸载应用</h2></div>
+      <div class="page-body">
+        <p class="page-desc">彻底卸载应用及其残留数据。<strong>此操作不可恢复</strong>，请谨慎使用。</p>
+        <div class="uninstall-toolbar">
+          <button class="btn btn-secondary" id="uninstall-scan">🔍 扫描应用</button>
+          <button class="btn btn-danger" id="uninstall-selected" disabled>🗑️ 卸载选中 (0)</button>
+          <span class="uninstall-count" id="uninstall-count">共 0 个应用</span>
+        </div>
+        <div class="uninstall-list" id="uninstall-list">
+          <div class="loading">🔄 正在准备... 点击下方"扫描应用"查看已安装的应用列表</div>
+        </div>
+        <div class="output-area" id="output-uninstall"></div>
+      </div>
+    </div>
+
+    <!-- Purge Page -->
+    <div id="page-purge" class="page hidden">
+      <div class="page-header"><h2>🏗️ 构建产物清理</h2></div>
+      <div class="page-body">
+        <p class="page-desc">清理 node_modules、target、build 等开发构建产物。这些文件可被包管理工具重建。</p>
+        <div class="btn-group">
+          <button class="btn btn-secondary" data-action="dry-run" data-module="purge">🔍 扫描预览</button>
+          <button class="btn btn-primary" data-action="run" data-module="purge">⚡ 执行清理</button>
+        </div>
+        <div class="output-area" id="output-purge"></div>
+      </div>
+    </div>
+
+    <!-- Optimize Page -->
+    <div id="page-optimize" class="page hidden">
+      <div class="page-header"><h2>⚙️ 系统优化</h2></div>
+      <div class="page-body">
+        <p class="page-desc">刷新系统服务、重置 DNS 缓存。执行期间系统可能会有短暂卡顿。</p>
+        <div class="btn-group">
+          <button class="btn btn-secondary" data-action="dry-run" data-module="optimize">🔍 扫描预览</button>
+          <button class="btn btn-primary" data-action="run" data-module="optimize">⚡ 执行优化</button>
+        </div>
+        <div class="output-area" id="output-optimize"></div>
+      </div>
+    </div>
+
+    <!-- Installer Page -->
+    <div id="page-installer" class="page hidden">
+      <div class="page-header"><h2>🗂️ 安装包清理</h2></div>
+      <div class="page-body">
+        <p class="page-desc">清理已下载的 .dmg / .pkg 安装包文件。不影响已安装的应用。</p>
+        <div class="btn-group">
+          <button class="btn btn-secondary" data-action="dry-run" data-module="installer">🔍 扫描预览</button>
+          <button class="btn btn-primary" data-action="run" data-module="installer">⚡ 执行清理</button>
+        </div>
+        <div class="output-area" id="output-installer"></div>
+      </div>
+    </div>
+
+    <!-- Analyze Page -->
+    <div id="page-analyze" class="page hidden">
+      <div class="page-header"><h2>📊 磁盘分析</h2></div>
+      <div class="page-body" id="analyze-body">
+        <div class="loading">加载中...</div>
+      </div>
+    </div>
+
+    <!-- History Page -->
+    <div id="page-history" class="page hidden">
+      <div class="page-header"><h2>📋 操作历史</h2></div>
+      <div class="page-body" id="history-body">
+        <div class="loading">加载中...</div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Right Info Panel -->
+  <aside id="info-panel">
+    <div id="info-content">
+      <h4>模块说明</h4>
+      <p id="info-desc">选择一个操作模块查看说明</p>
+      <div id="info-risk" class="hidden">
+        <h4>风险等级</h4>
+        <div id="risk-indicator"></div>
+        <h4>影响范围</h4>
+        <ul id="risk-affects"></ul>
+        <h4>不影响</h4>
+        <ul id="risk-safezones"></ul>
+      </div>
+    </div>
+  </aside>
+</div>
+
+<!-- Status Bar -->
+<footer id="statusbar">
+  <span id="statusbar-status">就绪</span>
+  <span id="statusbar-disk" class="statusbar-right"></span>
+</footer>
+
+<!-- Risk Confirmation Sheet Overlay -->
+<div id="risk-overlay" class="overlay hidden">
+  <div class="sheet">
+    <div class="sheet-header" id="sheet-header">
+      <span id="sheet-title">操作确认</span>
+      <span id="sheet-risk-label"></span>
+    </div>
+    <div class="sheet-body">
+      <h4>将执行以下操作</h4>
+      <ul id="sheet-affects"></ul>
+      <h4>以下内容<strong>不受影响</strong></h4>
+      <ul id="sheet-safezones"></ul>
+      <label class="sheet-checkbox">
+        <input type="checkbox" id="risk-consent">
+        <span>我已了解以上风险，确认执行</span>
+      </label>
+    </div>
+    <div class="sheet-footer">
+      <button class="btn btn-secondary" id="sheet-cancel">取消</button>
+      <button class="btn btn-danger" id="sheet-confirm" disabled>确认执行</button>
+    </div>
+  </div>
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>
