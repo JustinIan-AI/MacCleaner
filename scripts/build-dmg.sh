@@ -9,7 +9,7 @@ echo ""
 
 # 1. Build Go backend
 echo "  🔨  Building Go backend..."
-go build -o mole-tool . 2>&1
+go build -ldflags="-s -w" -trimpath -o mole-tool . 2>&1
 echo "  ✅  Go backend built"
 
 # 2. Copy sidecar binary

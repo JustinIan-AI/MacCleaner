@@ -11,7 +11,7 @@ cd "$(dirname "$0")"
 
 # 1. Build Go backend
 echo "  🔨  Compiling Go backend..."
-go build -o mole-tool . 2>&1
+go build -ldflags="-s -w" -trimpath -o mole-tool . 2>&1
 echo "  ✅  Go backend compiled"
 
 # 2. Copy sidecar binary for Tauri
