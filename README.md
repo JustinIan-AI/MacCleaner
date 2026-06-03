@@ -1,39 +1,47 @@
 # MacCleaner 🧹
 
-A macOS system cleanup tool with a web UI, powered by [mole](https://github.com/farcaller/mole).
+macOS 系统清理工具，基于 [mole](https://github.com/farcaller/mole) 构建的 Web 界面。
 
-## Features
+## 功能
 
-- 🩺 **System Health** — Disk, CPU, memory monitoring
-- 🧹 **Deep Clean** — Scan and clean caches, logs, developer files
-- 🗑️ **App Uninstall** — Uninstall apps with all leftover data
-- 🏗️ **Build Artifacts** — Clean node_modules, target, build dirs
-- 📊 **Disk Analysis** — Analyze disk usage and find cleanup opportunities
-- ⚙️ **System Optimization** — DNS flush, service restarts
-- 🗂️ **Installer Cleanup** — Remove .dmg / .pkg files
+- 🩺 **系统健康** — 磁盘、CPU、内存监测
+- 🧹 **深度清理** — 扫描并清理缓存、日志、开发者文件
+- 🗑️ **卸载应用** — 彻底卸载应用及残留数据
+- 🏗️ **构建产物** — 清理 node_modules、target、build 等目录
+- 📊 **磁盘分析** — 分析磁盘使用，发现可清理空间
+- ⚙️ **系统优化** — DNS 刷新、服务重启
+- 🗂️ **安装包清理** — 清理 .dmg / .pkg 安装文件
 
-## Quick Start
+## 快速开始
 
 ```bash
-# Prerequisites
+# 前提条件
 brew install mo
 
-# Build & run
-go build -o mole-tool .
-./mole-tool
+# 编译并运行
+go build -o macleaner .
+./macleaner
 # → http://localhost:4399
 ```
 
-Or use the start script: `./start.sh`
+或使用启动脚本: `./start.sh`
 
-## Install as Service (LaunchAgent)
+## 安装为系统服务 (LaunchAgent)
 
 ```bash
 ./scripts/install-service.sh
 ```
 
-## Tech Stack
+## 作者
 
-- **Backend:** Go (net/http, embedded web assets)
-- **Frontend:** Vanilla JS, CSS (macOS native style)
-- **Engine:** [mole](https://github.com/farcaller/mole) CLI for cleanup operations
+**JustinIan**
+
+公众号: **AI Agentic共创**
+
+![公众号二维码](docs/laoyan-wechat.png)
+
+## 技术栈
+
+- **后端:** Go (net/http, 嵌入式 Web 资源)
+- **前端:** 原生 JavaScript + CSS (macOS 原生风格)
+- **清理引擎:** [mole](https://github.com/farcaller/mole)

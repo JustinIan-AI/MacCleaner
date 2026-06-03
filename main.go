@@ -577,7 +577,7 @@ func main() {
 	mux.HandleFunc("/api/optimize/dry-run", sseHandler("optimize", "--dry-run"))
 	mux.HandleFunc("/api/optimize/run", sseHandler("optimize"))
 
-	fmt.Printf("  🛠️  Mole Tool running at http://localhost:%s\n", port)
+	fmt.Printf("  🛠️  MacCleaner running at http://localhost:%s\n", port)
 	fmt.Printf("  Press Ctrl+C to stop\n")
 
 	if err := http.ListenAndServe(":"+port, mux); err != nil {

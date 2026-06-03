@@ -3,7 +3,7 @@ set -e
 cd "$(dirname "$0")/.."
 
 echo ""
-echo "  🛠️  Mole 助手 — 安装系统服务"
+echo "  🛠️  MacCleaner — 安装系统服务"
 echo "  ─────────────────────────────"
 
 # Check mo
@@ -18,8 +18,8 @@ go build -o mole-tool . 2>&1 || { echo "  ❌ 编译失败"; exit 1; }
 echo "  ✅ 编译成功"
 
 BIN_DIR="$(pwd)"
-PLIST_PATH="$HOME/Library/LaunchAgents/com.mole-tool.plist"
-PLIST_LABEL="com.mole-tool"
+PLIST_PATH="$HOME/Library/LaunchAgents/com.macleaner.plist"
+PLIST_LABEL="com.macleaner"
 
 # Unload existing if any
 launchctl unload -w "$PLIST_PATH" 2>/dev/null || true
@@ -73,7 +73,7 @@ fi
 
 echo ""
 echo "  管理命令："
-echo "    状态:  launchctl list com.mole-tool"
+echo "    状态:  launchctl list com.macleaner"
 echo "    停止:  launchctl unload -w $PLIST_PATH"
 echo "    启动:  launchctl load -w $PLIST_PATH"
 echo "    日志:  tail -f /tmp/mole-tool.log"

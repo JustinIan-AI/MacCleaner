@@ -144,7 +144,7 @@
       document.querySelectorAll('.page').forEach(function(p) { p.classList.add('hidden'); });
       var welcome = document.getElementById('page-placeholder');
       if (welcome) welcome.classList.remove('hidden');
-      titlebarTitle.textContent = 'Mole 助手';
+      titlebarTitle.textContent = 'MacCleaner';
       setStatusbar('就绪', '');
       return;
     }
@@ -160,7 +160,7 @@
     const page = $('page-' + module);
     if (page) page.classList.remove('hidden');
 
-    titlebarTitle.textContent = 'Mole 助手 — ' + MODULES[module].label;
+    titlebarTitle.textContent = 'MacCleaner — ' + MODULES[module].label;
 
     updateInfoPanel(module);
     setStatusbar(MODULES[module].label, '');

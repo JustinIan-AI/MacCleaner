@@ -3,7 +3,7 @@
 cd "$(dirname "$0")"
 
 echo ""
-echo "  🛠️  Mole 助手 — 构建 & 启动"
+echo "  🛠️  MacCleaner — 构建 & 启动"
 echo "  ─────────────────────────────"
 
 # Check mo
