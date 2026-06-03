@@ -377,7 +377,7 @@ ul { list-style: none; }
 }
 #statusbar-status { flex: 1; }
 .statusbar-right { color: var(--text-tertiary); }
-
+#statusbar-version { margin-left: 12px; color: var(--text-tertiary); font-size: 11px; }
 /* === Risk Confirmation Sheet === */
 .overlay {
   position: fixed;

@@ -2068,6 +2068,8 @@
     // Check mole installation status
     await checkMoleStatus();
 
+    var verEl = $('statusbar-version');
+    if (verEl) verEl.textContent = 'v0.1.1';
     initCleanEventHandlers();
     await loadRiskMap();
     // Show welcome page by default, navigate to specific module if hash is set

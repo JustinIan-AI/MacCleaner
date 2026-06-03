@@ -151,6 +151,7 @@ func checkAndInstallMole() {
 
 	log.Printf("[mole] mo not found, installing via Homebrew...")
 	cmd := exec.Command(brewPath, "install", "mole")
+	cmd.Env = append(os.Environ(), "HOMEBREW_NO_AUTO_UPDATE=1")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		moleStatus.mu.Lock()
@@ -201,6 +202,17 @@ func handleMoleStatus(w http.ResponseWriter, r *http.Request) {
 		moleStatus.Message = "正在重新安装 mole..."
 		moleStatus.mu.Unlock()
 		log.Printf("[mole] retrying installation...")
+		go checkAndInstallMole()
+		moleStatus.mu.RLock()
+		defer moleStatus.mu.RUnlock()
+		json.NewEncoder(w).Encode(moleStatus)
+		return
+	}
+	// 未安装且未在安装中 -> 触发首次安装
+	if !moleStatus.Installed && !moleStatus.Installing {
+		moleStatus.Message = "正在安装 mo..."
+		moleStatus.mu.Unlock()
+		log.Printf("[mole] triggering initial installation from handleMoleStatus")
 		go checkAndInstallMole()
 		moleStatus.mu.RLock()
 		defer moleStatus.mu.RUnlock()
@@ -357,13 +369,22 @@ func sseHandler(args ...string) http.HandlerFunc {
 			return
 		}
 		if !moleStatus.Installed {
+			if !moleStatus.Installing && moleStatus.Error == "" {
+				moleStatus.mu.RUnlock()
+				moleStatus.mu.Lock()
+				moleStatus.Message = "正在安装 mo..."
+				moleStatus.mu.Unlock()
+				go checkAndInstallMole()
+				fmt.Fprintf(w, "event: stderr\ndata: {\"line\":\"mo 未安装，正在后台自动安装中，请稍候刷新页面\"}\n\n")
+				fmt.Fprintf(w, "event: done\ndata: {\"exit_code\":1,\"duration_ms\":0}\n\n")
+				flusher.Flush()
+				return
+			}
 			msg := "mo 正在安装中，请稍候..."
 			if moleStatus.Error != "" {
 				msg = moleStatus.Message + ": " + moleStatus.Error
 			} else if moleStatus.Installing {
 				msg = "mo 正在安装中（brew install mole），请等待安装完成"
-			} else {
-				msg = "mo 未安装，正在后台自动安装中，请稍候刷新页面"
 			}
 			moleStatus.mu.RUnlock()
 			fmt.Fprintf(w, "event: stderr\ndata: {\"line\":\"" + msg + "\"}\n\n")
@@ -371,7 +392,6 @@ func sseHandler(args ...string) http.HandlerFunc {
 			flusher.Flush()
 			return
 		}
-		moleStatus.mu.RUnlock()
 		moPath := findMo()
 
 		modKey := extractModule(args)
