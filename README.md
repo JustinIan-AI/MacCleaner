@@ -1,6 +1,6 @@
 # MacCleaner 🧹
 
-macOS 系统清理工具，基于 [mole](https://github.com/tw93/Mole) 构建的 Web 界面,降低使用门槛，边界清理你的Mac笔记本。
+macOS 系统清理工具，基于 [mole](https://github.com/tw93/Mole) 构建的 Web 界面，降低使用门槛，轻松清理你的 Mac 笔记本。
 
 ## 功能
 
@@ -12,19 +12,31 @@ macOS 系统清理工具，基于 [mole](https://github.com/tw93/Mole) 构建的
 - ⚙️ **系统优化** — DNS 刷新、服务重启
 - 🗂️ **安装包清理** — 清理 .dmg / .pkg 安装文件
 
+> **⚠️ 风险提示**：所有清理操作均基于 mole 引擎，缓存清理后会自动重建，应用卸载后不可恢复。操作前请确认所选项目。
+
+## ❗ 常见问题
+
+### macOS 提示"安装包已损坏"或"无法验证开发者"
+
+如果 macOS 提示 MacCleaner 已损坏或无法验证开发者，请在终端执行以下命令后重新打开：
+
+```bash
+sudo xattr -rd com.apple.quarantine /Applications/MacCleaner.app
+```
+
 ## 快速开始
 
 ```bash
-# 前提条件
+# 前提条件（工具会自动检测并安装）
 brew install mo
 
 # 编译并运行
-go build -o macleaner .
-./macleaner
+go build -o maccleaner .
+./maccleaner
 # → http://localhost:4399
 ```
 
-或使用启动脚本: `./start.sh`
+> **注意**：MacCleaner 启动时会自动检测 `mo` 命令是否可用，如果未安装则会自动执行 `brew install mo` 安装，请耐心等待安装完成。
 
 ## 安装为系统服务 (LaunchAgent)
 

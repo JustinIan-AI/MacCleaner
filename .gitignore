@@ -23,3 +23,4 @@ src-tauri/Cargo.lock
 # DMG package
 MacCleaner.dmg
 node_modules/
+MacCleaner

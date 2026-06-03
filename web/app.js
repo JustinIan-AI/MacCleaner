@@ -1917,7 +1917,73 @@
   window.updateCleanExecBtn = updateCleanExecBtn;
 
   // === Init ===
+  // Check mole installation status on startup
+  async function checkMoleStatus() {
+    const overlay = document.getElementById('mole-overlay');
+    const msgEl = document.getElementById('mole-status-message');
+    const errorEl = document.getElementById('mole-error-detail');
+    const retryBtn = document.getElementById('mole-retry-btn');
+    const spinner = document.getElementById('mole-spinner');
+
+    try {
+      var res = await fetch('/api/mole/status');
+      var status = await res.json();
+
+      if (status.installed) {
+        // mo is already installed, nothing to do
+        return;
+      }
+
+      // Show the overlay
+      overlay.style.display = 'flex';
+
+      // Poll for status updates
+      var pollTimer = setInterval(async function() {
+        try {
+          var r2 = await fetch('/api/mole/status');
+          var s2 = await r2.json();
+
+          if (s2.installed) {
+            clearInterval(pollTimer);
+            msgEl.textContent = '✅ mo 安装成功，正在启动...';
+            setTimeout(function() {
+              overlay.style.display = 'none';
+            }, 1000);
+            return;
+          }
+
+          if (s2.installing) {
+            msgEl.textContent = s2.message || '正在安装 mo...（brew install mo）';
+            spinner.style.display = 'block';
+            errorEl.style.display = 'none';
+            retryBtn.style.display = 'none';
+          } else if (s2.error) {
+            msgEl.textContent = '❌ ' + s2.message;
+            spinner.style.display = 'none';
+            errorEl.style.display = 'block';
+            errorEl.textContent = s2.error;
+            retryBtn.style.display = 'inline-block';
+          }
+        } catch (e) {
+          // keep polling
+        }
+      }, 2000);
+
+      // Retry button
+      retryBtn.onclick = function() {
+        window.location.reload();
+      };
+
+    } catch (e) {
+      // If endpoint doesn't exist (older version), just continue
+      console.log('Mole status check unavailable:', e);
+    }
+  }
+
   async function init() {
+    // Check mole installation status
+    await checkMoleStatus();
+
     initCleanEventHandlers();
     await loadRiskMap();
     // Show welcome page by default, navigate to specific module if hash is set
