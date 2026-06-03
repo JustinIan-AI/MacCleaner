@@ -1,6 +1,6 @@
 # MacCleaner 🧹
 
-macOS 系统清理工具，基于 [mole](https://github.com/farcaller/mole) 构建的 Web 界面。
+macOS 系统清理工具，基于 [mole](https://github.com/tw93/Mole) 构建的 Web 界面。
 
 ## 功能
 
@@ -44,4 +44,4 @@ go build -o macleaner .
 
 - **后端:** Go (net/http, 嵌入式 Web 资源)
 - **前端:** 原生 JavaScript + CSS (macOS 原生风格)
-- **清理引擎:** [mole](https://github.com/farcaller/mole)
+- **清理引擎:** [mole](https://github.com/tw93/Mole)
