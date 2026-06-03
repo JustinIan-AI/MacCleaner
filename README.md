@@ -28,7 +28,7 @@ sudo xattr -rd com.apple.quarantine /Applications/MacCleaner.app
 
 ```bash
 # 前提条件（工具会自动检测并安装）
-brew install mo
+brew install mole
 
 # 编译并运行
 go build -o maccleaner .
@@ -36,7 +36,7 @@ go build -o maccleaner .
 # → http://localhost:4399
 ```
 
-> **注意**：MacCleaner 启动时会自动检测 `mo` 命令是否可用，如果未安装则会自动执行 `brew install mo` 安装，请耐心等待安装完成。
+> **注意**：MacCleaner 启动时会自动检测 `mo` 命令是否可用，如果未安装则会自动执行 `brew install mole` 安装，请耐心等待安装完成。
 
 ## 安装为系统服务 (LaunchAgent)
 

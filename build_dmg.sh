@@ -25,32 +25,74 @@ mkdir -p "$BUNDLE_DIR/share/create-dmg"
   ln -sf /opt/homebrew/share/create-dmg/support "$BUNDLE_DIR/share/create-dmg/support"
 
 # First try full Tauri build
-if LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8 cargo tauri build 2>/dev/null; then
+if LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8 cargo tauri build 2>&1; then
   echo "  ✅ Tauri build completed"
 else
   echo "  ⚠️  Tauri bundler had issues, but binary was compiled"
 fi
 
-# 4. Create DMG directly from the .app bundle using hdiutil
-APP_PATH="$BUNDLE_DIR/macos/MacCleaner.app"
-DMG_OUTPUT="$BUNDLE_DIR/dmg/MacCleaner_1.0.0_aarch64.dmg"
+# 4. Create DMG with Applications symlink from the Tauri-built .app
+# The Tauri build creates a .app and DMG, but we need to add the Applications symlink.
+# We extract the .app from the Tauri-generated DMG and rebuild with proper structure.
+TAURI_DMG="$BUNDLE_DIR/dmg/MacCleaner_1.0.0_aarch64.dmg"
+FINAL_DMG="$BUNDLE_DIR/dmg/MacCleaner_1.0.0_aarch64.dmg"
 
-if [ -d "$APP_PATH" ]; then
-  echo "  🔨  Creating DMG with hdiutil..."
-  rm -f "$DMG_OUTPUT" "$BUNDLE_DIR/dmg"/rw.*.dmg 2>/dev/null
-  hdiutil create -srcfolder "$APP_PATH" \
-    -volname "MacCleaner" \
-    -format UDZO \
-    -ov \
-    "$DMG_OUTPUT" 2>&1
-  echo "  ✅  DMG created"
+if [ -f "$TAURI_DMG" ]; then
+  echo "  🔨  Rebuilding DMG with Applications symlink..."
+  
+  # Mount the Tauri-generated DMG to extract the .app
+  MOUNT_POINT="$(mktemp -d)"
+  hdiutil attach "$TAURI_DMG" -mountpoint "$MOUNT_POINT" -nobrowse 2>&1
+  
+  # Find the .app in the mounted DMG
+  APP_IN_DMG=$(find "$MOUNT_POINT" -name "*.app" -maxdepth 2 -type d | head -1)
+  if [ -n "$APP_IN_DMG" ] && [ -d "$APP_IN_DMG" ]; then
+    # Create staging directory with .app + Applications symlink
+    STAGING_DIR="$(mktemp -d)"
+    cp -R "$APP_IN_DMG" "$STAGING_DIR/"
+    ln -s /Applications "$STAGING_DIR/Applications"
+    
+    # Unmount Tauri DMG
+    hdiutil detach "$MOUNT_POINT" -force 2>&1
+    rm -rf "$MOUNT_POINT"
+    
+    # Remove old DMG
+    rm -f "$FINAL_DMG"
+    
+    # Create new DMG with create-dmg (proper layout)
+    create-dmg \
+      --volname "MacCleaner" \
+      --window-pos 200 120 \
+      --window-size 600 400 \
+      --icon-size 100 \
+      --icon "MacCleaner.app" 175 190 \
+      --hide-extension "MacCleaner.app" \
+      --app-drop-link 425 190 \
+      --no-internet-enable \
+      "$FINAL_DMG" \
+      "$STAGING_DIR" 2>&1 || \
+    # Fallback: create simple DMG
+    hdiutil create -srcfolder "$STAGING_DIR" \
+      -volname "MacCleaner" \
+      -format UDZO \
+      -ov \
+      "$FINAL_DMG" 2>&1
+    
+    # Clean up staging
+    rm -rf "$STAGING_DIR"
+    echo "  ✅  DMG with Applications symlink created"
+  else
+    echo "  ⚠️  Could not find .app in mounted DMG, using original"
+    hdiutil detach "$MOUNT_POINT" -force 2>&1
+    rm -rf "$MOUNT_POINT"
+  fi
 else
-  echo "  ❌  App bundle not found at $APP_PATH"
+  echo "  ❌  Tauri DMG not found at $TAURI_DMG"
   exit 1
 fi
 
 # 5. Copy final DMG to project root
-cp "$DMG_OUTPUT" MacCleaner.dmg
+cp "$FINAL_DMG" MacCleaner.dmg
 echo ""
 echo "  ✅  MacCleaner.dmg ready ($(du -h MacCleaner.dmg | cut -f1))"
 echo "  📦  Open MacCleaner.dmg to install"

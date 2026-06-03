@@ -135,7 +135,7 @@ func checkAndInstallMole() {
 
 	moleStatus.mu.Lock()
 	moleStatus.Installing = true
-	moleStatus.Message = "正在安装 mo...（brew install mo）"
+	moleStatus.Message = "正在安装 mo...（brew install mole）"
 	moleStatus.mu.Unlock()
 
 	brewPath, err := exec.LookPath("brew")
@@ -150,7 +150,7 @@ func checkAndInstallMole() {
 	}
 
 	log.Printf("[mole] mo not found, installing via Homebrew...")
-	cmd := exec.Command(brewPath, "install", "mo")
+	cmd := exec.Command(brewPath, "install", "mole")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		moleStatus.mu.Lock()
@@ -182,6 +182,33 @@ func checkAndInstallMole() {
 // handleMoleStatus returns the current mole installation status
 func handleMoleStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+
+	moleStatus.mu.Lock()
+	// 标记已安装但实际找不到二进制 -> 用户手动删除了 mo
+	if moleStatus.Installed && findMo() == "" {
+		moleStatus.Installed = false
+		moleStatus.Message = "mo 已被删除，正在重新安装..."
+		moleStatus.mu.Unlock()
+		go checkAndInstallMole()
+		moleStatus.mu.RLock()
+		defer moleStatus.mu.RUnlock()
+		json.NewEncoder(w).Encode(moleStatus)
+		return
+	}
+	// 检测到安装失败状态 -> 重置并重新安装
+	if !moleStatus.Installed && !moleStatus.Installing && moleStatus.Error != "" {
+		moleStatus.Error = ""
+		moleStatus.Message = "正在重新安装 mole..."
+		moleStatus.mu.Unlock()
+		log.Printf("[mole] retrying installation...")
+		go checkAndInstallMole()
+		moleStatus.mu.RLock()
+		defer moleStatus.mu.RUnlock()
+		json.NewEncoder(w).Encode(moleStatus)
+		return
+	}
+	moleStatus.mu.Unlock()
+
 	moleStatus.mu.RLock()
 	defer moleStatus.mu.RUnlock()
 	json.NewEncoder(w).Encode(moleStatus)
@@ -236,7 +263,27 @@ func handleHistory(w http.ResponseWriter, r *http.Request) {
 func runMoCapture(args ...string) (string, error) {
 	moPath := findMo()
 	if moPath == "" {
-		return "", fmt.Errorf("mo not found. Install with: brew install mo")
+		// 曾标记为已安装但二进制丢失 -> 用户手动删除了 mo，重新安装
+		moleStatus.mu.Lock()
+		if moleStatus.Installed && !moleStatus.Installing && moleStatus.Error == "" {
+			moleStatus.Installed = false
+			moleStatus.Installing = true
+			moleStatus.Message = "mo 已被删除，正在重新安装..."
+			moleStatus.mu.Unlock()
+			go checkAndInstallMole()
+			return "", fmt.Errorf("mo 已被删除，正在重新安装，请稍候")
+		}
+		moleStatus.mu.Unlock()
+
+		moleStatus.mu.RLock()
+		defer moleStatus.mu.RUnlock()
+		if moleStatus.Installing {
+			return "", fmt.Errorf("mo 正在安装中，请等待安装完成后再试")
+		}
+		if moleStatus.Error != "" {
+			return "", fmt.Errorf("mo 安装失败: %s", moleStatus.Error)
+		}
+		return "", fmt.Errorf("mo 未安装，正在后台自动安装中，请稍候刷新页面")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -295,13 +342,37 @@ func sseHandler(args ...string) http.HandlerFunc {
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Connection", "keep-alive")
 
-		moPath := findMo()
-		if moPath == "" {
-			fmt.Fprintf(w, "event: stderr\ndata: {\"line\":\"错误: 未找到 mo 命令。请先安装: brew install mo\"}\n\n")
+		moleStatus.mu.RLock()
+		// 标记已安装但实际找不到二进制 -> 用户手动删除了 mo
+		if moleStatus.Installed && findMo() == "" {
+			moleStatus.mu.RUnlock()
+			moleStatus.mu.Lock()
+			moleStatus.Installed = false
+			moleStatus.Message = "mo 已被删除，正在重新安装..."
+			moleStatus.mu.Unlock()
+			go checkAndInstallMole()
+			fmt.Fprintf(w, "event: stderr\ndata: {\"line\":\"mo 已被删除，正在重新安装，请稍候\"}\n\n")
 			fmt.Fprintf(w, "event: done\ndata: {\"exit_code\":1,\"duration_ms\":0}\n\n")
 			flusher.Flush()
 			return
 		}
+		if !moleStatus.Installed {
+			msg := "mo 正在安装中，请稍候..."
+			if moleStatus.Error != "" {
+				msg = moleStatus.Message + ": " + moleStatus.Error
+			} else if moleStatus.Installing {
+				msg = "mo 正在安装中（brew install mole），请等待安装完成"
+			} else {
+				msg = "mo 未安装，正在后台自动安装中，请稍候刷新页面"
+			}
+			moleStatus.mu.RUnlock()
+			fmt.Fprintf(w, "event: stderr\ndata: {\"line\":\"" + msg + "\"}\n\n")
+			fmt.Fprintf(w, "event: done\ndata: {\"exit_code\":1,\"duration_ms\":0}\n\n")
+			flusher.Flush()
+			return
+		}
+		moleStatus.mu.RUnlock()
+		moPath := findMo()
 
 		modKey := extractModule(args)
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
@@ -1135,7 +1206,8 @@ func main() {
 	mux.HandleFunc("/api/module/delete-stream", handleModuleDeleteStream)
 	mux.HandleFunc("/api/optimize/dry-run", sseHandler("optimize", "--dry-run"))
 	mux.HandleFunc("/api/optimize/run", sseHandler("optimize"))
-
+	// Check mole/mo installation in background so server starts immediately
+	go checkAndInstallMole()
 	fmt.Printf("  🛠️  MacCleaner running at http://localhost:%s\n", port)
 	fmt.Printf("  Press Ctrl+C to stop\n")
 
