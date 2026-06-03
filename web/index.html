@@ -81,6 +81,7 @@
           <div style="display:flex;gap:8px;align-items:center">
             <input type="text" id="clean-custom-path" placeholder="输入自定义路径（如 ~/Library/Caches/com.apple.Safari）"
                    style="flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;background:var(--bg-card);color:var(--text-primary)">
+            <button class="btn btn-outline btn-sm" id="clean-folder-picker-btn" title="选择文件夹">📂</button>
             <button class="btn btn-primary btn-sm" id="clean-scan-btn">🔍 扫描</button>
           </div>
         </div>
@@ -112,7 +113,7 @@
             </div>
             <div style="display:flex;gap:6px">
               <button class="btn btn-secondary btn-sm" id="clean-up-btn" style="display:none">⬆ 上级目录</button>
-              <button class="btn btn-primary btn-sm" id="clean-execute-btn" disabled>🧹 清理选中项</button>
+              <button class="btn btn-primary btn-sm" id="clean-execute-btn" disabled>🧹 <span id="clean-execute-label">清理选中项</span></button>
             </div>
           </div>
           <div id="clean-table-wrapper" style="border:1px solid var(--border-subtle);border-radius:8px;max-height:500px;overflow-y:auto">

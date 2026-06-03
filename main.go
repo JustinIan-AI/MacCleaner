@@ -518,6 +518,39 @@ func handleDiskDelete(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleDiskPickFolder opens a native macOS folder picker dialog
+func handleDiskPickFolder(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	// Use osascript to show a native folder picker on macOS
+	cmd := exec.Command("osascript", "-e", `set folderPath to choose folder with prompt "选择要扫描的文件夹"
+set folderPosix to POSIX path of folderPath
+return folderPosix`)
+	output, err := cmd.Output()
+	if err != nil {
+		// User cancelled or error
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"path":      "",
+			"cancelled": true,
+		})
+		return
+	}
+
+	path := strings.TrimSpace(string(output))
+	if path == "" {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"path":      "",
+			"cancelled": true,
+		})
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"path":      path,
+		"cancelled": false,
+	})
+}
+
 // Installer scan paths (from mo installer.sh)
 var installerScanPaths = []string{
 	os.ExpandEnv("${HOME}/Downloads"),
@@ -986,6 +1019,7 @@ func main() {
 	mux.HandleFunc("/api/risk-map", handleRiskMap)
 	mux.HandleFunc("/api/disk/scan", handleDiskScan)
 	mux.HandleFunc("/api/disk/delete", handleDiskDelete)
+	mux.HandleFunc("/api/disk/pick-folder", handleDiskPickFolder)
 	mux.HandleFunc("/api/stop", handleStop)
 
 	// SSE routes (dry-run and run)

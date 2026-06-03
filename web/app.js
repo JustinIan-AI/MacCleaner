@@ -1605,6 +1605,26 @@
       });
     }
 
+    // Folder picker button
+    var folderPickerBtn = document.getElementById('clean-folder-picker-btn');
+    if (folderPickerBtn) {
+      folderPickerBtn.addEventListener('click', async function() {
+        try {
+          var res = await fetch('/api/disk/pick-folder');
+          var data = await res.json();
+          if (data && data.path && !data.cancelled) {
+            var input = document.getElementById('clean-custom-path');
+            if (input) {
+              input.value = data.path;
+              scanDisk(data.path);
+            }
+          }
+        } catch (e) {
+          console.error('Folder picker error:', e);
+        }
+      });
+    }
+
     // Custom path enter key
     var pathInput = document.getElementById('clean-custom-path');
     if (pathInput) {
@@ -1669,6 +1689,17 @@
 
     var pathDisplay = document.getElementById('clean-current-path');
     if (pathDisplay) pathDisplay.textContent = path;
+
+    // Update scan/execute button labels based on path
+    var scanBtn = document.getElementById('clean-scan-btn');
+    var execLabel = document.getElementById('clean-execute-label');
+    if (path === '/') {
+      if (scanBtn) scanBtn.textContent = '🔍 全盘扫描';
+      if (execLabel) execLabel.textContent = '全盘清理';
+    } else {
+      if (scanBtn) scanBtn.textContent = '🔍 扫描';
+      if (execLabel) execLabel.textContent = '清理选中项';
+    }
 
     try {
       var res = await fetch('/api/disk/scan', {
