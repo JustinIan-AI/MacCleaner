@@ -104,6 +104,35 @@
     }
   }
 
+  // === Mole Status Refresh Helper ===
+  function showMoleErrorWithRefresh(container, errorMsg) {
+    if (!errorMsg || errorMsg.indexOf("mo") === -1) return false;
+    container.innerHTML = '<div class="loading" style="color:var(--red)">❌ ' + escapeHtml(errorMsg) + '<br><br><button class="btn btn-secondary btn-sm" onclick="window.refreshMoleStatus(this)" style="font-size:12px;padding:4px 12px">🔄 刷新状态</button></div>';
+    return true;
+  }
+
+  window.refreshMoleStatus = async function(btn) {
+    btn.disabled = true;
+    btn.textContent = '⏳ 检测中...';
+    try {
+      var res = await fetch('/api/mole/status');
+      var status = await res.json();
+      if (status.installed) {
+        btn.textContent = '✅ 已就绪，刷新页面...';
+        setTimeout(function() { window.location.reload(); }, 500);
+      } else if (status.installing) {
+        btn.textContent = '⏳ 正在安装 mo...';
+        btn.disabled = false;
+      } else {
+        btn.textContent = '⚠️ ' + (status.error || '安装异常，刷新页面重试');
+        btn.disabled = false;
+      }
+    } catch(e) {
+      btn.textContent = '❌ 连接失败';
+      btn.disabled = false;
+    }
+  };
+
   // === Info Panel ===
   function updateInfoPanel(module) {
     const meta = MODULES[module];
@@ -526,7 +555,9 @@
       _cache.status = data;
       renderStatusData(body, data);
     } catch (e) {
-      body.innerHTML = `<div class="loading" style="color:var(--red)">❌ 获取状态失败: ${e.message}</div>`;
+      if (!showMoleErrorWithRefresh(body, e.message)) {
+        body.innerHTML = `<div class="loading" style="color:var(--red)">❌ 获取状态失败: ${e.message}</div>`;
+      }
     } finally {
       _statusFetching = false;
     }
@@ -597,13 +628,17 @@
       _cache.analyze = data;
       renderAnalyzeData(body, data);
     } catch (e) {
-      body.innerHTML = `<div class="loading" style="color:var(--red)">❌ 分析失败: ${e.message}</div>`;
+      if (!showMoleErrorWithRefresh(body, e.message)) {
+        body.innerHTML = `<div class="loading" style="color:var(--red)">❌ 分析失败: ${e.message}</div>`;
+      }
     }
   }
 
   function renderAnalyzeData(el, data) {
     if (data.error) {
-      el.innerHTML = `<div class="loading" style="color:var(--orange)">${escapeHtml(data.error)}</div>`;
+      if (!showMoleErrorWithRefresh(el, data.error)) {
+        el.innerHTML = `<div class="loading" style="color:var(--orange)">${escapeHtml(data.error)}</div>`;
+      }
       return;
     }
 
@@ -721,7 +756,9 @@
       _cache.history = data;
       renderHistoryData(body, data);
     } catch (e) {
-      body.innerHTML = `<div class="loading" style="color:var(--red)">❌ 加载失败: ${e.message}</div>`;
+      if (!showMoleErrorWithRefresh(body, e.message)) {
+        body.innerHTML = `<div class="loading" style="color:var(--red)">❌ 加载失败: ${e.message}</div>`;
+      }
     } finally {
       _historyFetching = false;
     }
@@ -729,7 +766,9 @@
 
   function renderHistoryData(el, data) {
     if (data.error) {
-      el.innerHTML = `<div class="loading" style="color:var(--orange)">${escapeHtml(data.error)}</div>`;
+      if (!showMoleErrorWithRefresh(el, data.error)) {
+        el.innerHTML = `<div class="loading" style="color:var(--orange)">${escapeHtml(data.error)}</div>`;
+      }
       return;
     }
     const sessions = data.sessions || [];
@@ -791,7 +830,9 @@
       uninstallApps = data;
       renderUninstallList();
     } catch (e) {
-      body.innerHTML = '<div class="uninstall-empty">\u274c \u52a0\u8f7d\u5931\u8d25: ' + escapeHtml(e.message) + '</div>';
+      if (!showMoleErrorWithRefresh(body, e.message)) {
+        body.innerHTML = '<div class="uninstall-empty">\u274c \u52a0\u8f7d\u5931\u8d25: ' + escapeHtml(e.message) + '</div>';
+      }
     }
   }
 
@@ -927,7 +968,9 @@
 
       // Check for error from backend
       if (items && items.error) {
-        outputEl.innerHTML = '<div class="line-stderr">❌ 扫描失败: ' + escapeHtml(items.error) + '</div>';
+        if (!showMoleErrorWithRefresh(outputEl, items.error)) {
+          outputEl.innerHTML = '<div class="line-stderr">❌ 扫描失败: ' + escapeHtml(items.error) + '</div>';
+        }
         setStatusbar('扫描失败', 'error');
         cleanup(module);
         return;
@@ -954,7 +997,9 @@
         setStatusbar('未发现可清理的项目', '');
       }
     } catch (e) {
-      outputEl.innerHTML = '<div class="line-stderr">❌ 扫描失败: ' + escapeHtml(e.message) + '</div>';
+      if (!showMoleErrorWithRefresh(outputEl, e.message)) {
+        outputEl.innerHTML = '<div class="line-stderr">❌ 扫描失败: ' + escapeHtml(e.message) + '</div>';
+      }
       setStatusbar('扫描失败', 'error');
     }
 
@@ -1709,7 +1754,10 @@
       });
       if (!res.ok) {
         var errData = await res.json().catch(function() { return { error: 'HTTP ' + res.status }; });
-        tableBody.innerHTML = '<tr><td colspan="4" style="padding:20px;text-align:center;color:var(--red)">❌ ' + escapeHtml(errData.error || '扫描失败') + '</td></tr>';
+        var errMsg = errData.error || '扫描失败';
+        if (!showMoleErrorWithRefresh(tableBody, errMsg)) {
+          tableBody.innerHTML = '<tr><td colspan="4" style="padding:20px;text-align:center;color:var(--red)">❌ ' + escapeHtml(errMsg) + '</td></tr>';
+        }
         return;
       }
       var data = await res.json();
@@ -1717,7 +1765,9 @@
       cleanEntries = data.entries || [];
       renderCleanResults(data);
     } catch (e) {
-      tableBody.innerHTML = '<tr><td colspan="4" style="padding:20px;text-align:center;color:var(--red)">❌ 连接失败: ' + escapeHtml(e.message) + '</td></tr>';
+      if (!showMoleErrorWithRefresh(tableBody, e.message)) {
+        tableBody.innerHTML = '<tr><td colspan="4" style="padding:20px;text-align:center;color:var(--red)">❌ 连接失败: ' + escapeHtml(e.message) + '</td></tr>';
+      }
     }
   }
 
@@ -1917,7 +1967,107 @@
   window.updateCleanExecBtn = updateCleanExecBtn;
 
   // === Init ===
+  // Check mole installation status on startup
+  async function checkMoleStatus() {
+    const overlay = document.getElementById('mole-overlay');
+    const msgEl = document.getElementById('mole-status-message');
+    const errorEl = document.getElementById('mole-error-detail');
+    const retryBtn = document.getElementById('mole-retry-btn');
+    const spinner = document.getElementById('mole-spinner');
+    retryBtn.textContent = '刷新页面';
+
+    try {
+      var res = await fetch('/api/mole/status');
+      var status = await res.json();
+
+      // 1) 已安装 -> 直接进入
+      if (status.installed) {
+        return;
+      }
+
+      // 2) 未安装 -> 显示遮罩 + 启动安装
+      overlay.style.display = 'flex';
+      msgEl.textContent = '后端服务正在启动中，请稍后...';
+      spinner.style.display = 'block';
+      errorEl.style.display = 'none';
+      retryBtn.style.display = 'none';
+
+      // 3) 每 2s 轮询，最多 5 次
+      await new Promise(function(pollResolve) {
+        var retries = 0;
+        var maxRetries = 5;
+        var pollTimer = setInterval(async function() {
+          try {
+            var r2 = await fetch('/api/mole/status');
+            var s2 = await r2.json();
+
+            if (s2.installed) {
+              clearInterval(pollTimer);
+              msgEl.textContent = '✅ 后端服务已就绪';
+              setTimeout(function() {
+                overlay.style.display = 'none';
+                pollResolve();
+              }, 1000);
+              return;
+            }
+
+            retries++;
+            if (retries >= maxRetries) {
+              // 4) 5 次重试后仍未成功 -> 提示刷新页面
+              clearInterval(pollTimer);
+              msgEl.textContent = '⏳ 后端服务启动超时';
+              spinner.style.display = 'none';
+              errorEl.textContent = '请刷新页面重新检测 mole 安装状态';
+              errorEl.style.display = 'block';
+              retryBtn.style.display = 'inline-block';
+              return;
+            }
+
+            if (s2.installing) {
+              msgEl.textContent = '后端服务正在启动中，请稍后...（正在安装 mo）';
+              spinner.style.display = 'block';
+              errorEl.style.display = 'none';
+              retryBtn.style.display = 'none';
+            } else if (s2.error) {
+              msgEl.textContent = '⚠️ mole 安装异常';
+              spinner.style.display = 'none';
+              errorEl.style.display = 'block';
+              errorEl.textContent = s2.error;
+              retryBtn.style.display = 'inline-block';
+            } else {
+              msgEl.textContent = '后端服务正在启动中，请稍后...';
+              spinner.style.display = 'block';
+              errorEl.style.display = 'none';
+              retryBtn.style.display = 'none';
+            }
+          } catch (e) {
+            retries++;
+            if (retries >= maxRetries) {
+              clearInterval(pollTimer);
+              msgEl.textContent = '⏳ 后端服务启动超时';
+              spinner.style.display = 'none';
+              errorEl.style.display = 'block';
+              errorEl.textContent = '请刷新页面重新检测 mole 安装状态';
+              retryBtn.style.display = 'inline-block';
+              return;
+            }
+          }
+        }, 2000);
+
+        retryBtn.onclick = function() {
+          window.location.reload();
+        };
+      });
+
+    } catch (e) {
+      console.log('Mole status check unavailable:', e);
+    }
+  }
+
   async function init() {
+    // Check mole installation status
+    await checkMoleStatus();
+
     initCleanEventHandlers();
     await loadRiskMap();
     // Show welcome page by default, navigate to specific module if hash is set
